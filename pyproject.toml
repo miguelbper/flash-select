@@ -12,11 +12,13 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.0.0",
     "pandas>=2.0.0",
+    "scipy>=1.0.0",
     "shap>=0.47.0",
 ]
 
 [dependency-groups]
 dev = [
+    "polars>=1.0.0",
     "pre-commit>=4.2.0",  # Git hooks for code quality
     "pyright>=1.1.403",   # Static type checker
     "pytest>=8.4.1",      # Testing framework
@@ -66,9 +68,3 @@ select = [
 # Tell Ruff/isort that flash_select is first party, so that it puts it last in the imports
 [tool.ruff.lint.isort]
 known-first-party = ["flash_select"]
-
-[tool.pyright]
-venvPath = "."
-venv = ".venv"
-strict = ["**/*.py"]
-pythonVersion = "3.10"  # Choose same version as in `requires-python`
