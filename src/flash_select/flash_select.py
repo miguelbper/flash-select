@@ -24,7 +24,7 @@ def flash_select(
     X = X.to_numpy(dtype=np.float32)
     y = y.to_numpy(dtype=np.float32)
 
-    S = shap_values(tree_model, X)
+    S, _ = shap_values(tree_model, X)
 
     A = S.T @ S
     b = S.T @ y
@@ -39,10 +39,10 @@ def flash_select(
     return df
 
 
-def shap_values(tree_model: Any, X: NDArray) -> NDArray:
+def shap_values(tree_model: Any, X: NDArray) -> tuple[NDArray, NDArray]:
     explainer = Explainer(tree_model)
     shap_values = explainer(X)
-    return shap_values.values
+    return shap_values.values, shap_values.base_values
 
 
 def significance(

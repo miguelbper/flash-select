@@ -25,6 +25,7 @@ dev = [
     "pytest>=8.4.1", # Testing framework
     "pytest-cov>=6.2.1", # Test coverage reporting
     "ruff>=0.12.7", # Linter and formatter
+    "xgboost>=3.0.3",
 ]
 
 # ------------------------------------------------------------------------------
