@@ -1,0 +1,6 @@
+# Environment variables for the project
+# Copy this file to .envrc and modify as needed
+# direnv will automatically load these variables when you enter the project directory
+
+# Example environment variable
+export MY_ENV_VAR=0

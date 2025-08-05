@@ -1,0 +1,40 @@
+# Reports test coverage to Codecov
+
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv and set the python version
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: 3.13  # Choose same version as `requires-python` in pyproject.toml
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install the project
+        run: uv sync --all-extras --dev
+
+      - name: Run tests with coverage
+        run: uv run pytest --cov src
+
+      # For this to work, you need to
+      # - have a Codecov account
+      # - Configure the repository in Codecov
+      # - Set the CODECOV_TOKEN environment variable in the repository settings
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: miguelbper/python-template
