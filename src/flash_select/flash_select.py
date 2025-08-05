@@ -74,9 +74,15 @@ def significance(
 
 
 def pinv_rank(A: NDArray) -> tuple[NDArray, int]:
-    # TODO: use svd to compute pinv and rank
-    A_pinv = np.linalg.pinv(A)
-    A_rank = np.linalg.matrix_rank(A, hermitian=True)
+    U, s, Vh = np.linalg.svd(A, full_matrices=False)
+    tol = np.max(s) * max(A.shape) * np.finfo(s.dtype).eps
+
+    nonzero = s > tol
+    s_inv = np.zeros_like(s)
+    s_inv[nonzero] = 1 / s[nonzero]
+
+    A_pinv = Vh.T @ np.diag(s_inv) @ U.T
+    A_rank = np.sum(nonzero)
     return A_pinv, A_rank
 
 
