@@ -27,7 +27,11 @@ dev = [
     "ruff>=0.12.7", # Linter and formatter
     "statsmodels>=0.14.5",
     "xgboost>=3.0.3",
+    "shap-select",
 ]
+
+[tool.uv.sources]
+shap-select = { git = "ssh://git@github.com/transferwise/shap-select" }
 
 # ------------------------------------------------------------------------------
 # Build
