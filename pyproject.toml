@@ -11,15 +11,13 @@ requires-python = ">=3.10"
 
 dependencies = [
     "numpy>=2.0.0",
-    "pandas>=2.0.0",
+    "polars>=1.0.0",
     "scipy>=1.0.0",
     "shap>=0.47.0",
 ]
 
 [dependency-groups]
 dev = [
-    "hypothesis>=6.137.1",
-    "polars>=1.0.0",
     "pre-commit>=4.2.0", # Git hooks for code quality
     "pyright>=1.1.403", # Static type checker
     "pytest>=8.4.1", # Testing framework

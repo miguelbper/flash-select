@@ -2,7 +2,7 @@ import warnings
 from typing import Any
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import scipy
 from numpy.typing import NDArray
 from shap import Explainer
@@ -16,13 +16,13 @@ SELECTED = "selected"
 
 def flash_select(
     tree_model: Any,
-    X: pd.DataFrame,
-    y: pd.Series,
+    X: NDArray,
+    y: NDArray,
+    features: list[str],
     threshold: float = 0.05,
-) -> pd.DataFrame:
-    features = X.columns.tolist()
-    X = X.to_numpy(dtype=np.float32)
-    y = y.to_numpy(dtype=np.float32)
+) -> pl.DataFrame:
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
 
     S, _ = shap_values(tree_model, X)
 
@@ -33,8 +33,14 @@ def flash_select(
 
     df = significance(A, b, features, m, n, y_sq)
 
-    df[SELECTED] = (df[STAT_SIGNIFICANCE] < threshold).astype(int)
-    df.loc[df[T_VALUE] < 0, SELECTED] = -1
+    df = df.with_columns(
+        pl.when(pl.col(COEFFICIENT) < 0)
+        .then(-1)
+        .when(pl.col(STAT_SIGNIFICANCE) < threshold)
+        .then(1)
+        .otherwise(0)
+        .alias(SELECTED)
+    )
 
     return df
 
@@ -52,7 +58,7 @@ def significance(
     m: int,
     n: int,
     y_sq: float,
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     A_pinv, A_rank = pinv_rank(A)
     full_rank: bool = A_rank == n
 
@@ -66,11 +72,11 @@ def significance(
 
         idx = ols_out[T_VALUE].arg_min()
         row = ols_out.row(idx, named=True)
-        results.append(pd.DataFrame(row))
+        results.append(pl.DataFrame(row))
 
         A, b, features, A_pinv, A_rank, full_rank = downdate(A, b, features, A_pinv, full_rank, idx)
 
-    return pd.concat(results).sort_values(T_VALUE, ascending=False)
+    return pl.concat(results).sort(T_VALUE, descending=True)
 
 
 def pinv_rank(A: NDArray) -> tuple[NDArray, int]:
@@ -93,7 +99,7 @@ def ols(
     features: list[str],
     m: int,
     y_sq: float,
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     residual_dof: int = m - A_rank
 
     beta = A_pinv @ b  # (n,)
@@ -103,7 +109,7 @@ def ols(
     t_stats = beta / np.sqrt(sigma_sq * inv_diag)  # (n,)
     p_values = 2 * (1 - scipy.stats.t.cdf(np.abs(t_stats), residual_dof))  # (n,)
 
-    df = pd.DataFrame(
+    df = pl.DataFrame(
         {
             FEATURE_NAME: features,
             T_VALUE: t_stats,
