@@ -59,7 +59,8 @@ def significance(
     n: int,
     y_sq: float,
 ) -> pl.DataFrame:
-    A_pinv, A_rank = pinv_rank(A)
+    A_pinv = np.linalg.pinv(A)
+    A_rank = np.linalg.matrix_rank(A)
     full_rank = A_rank == n
 
     if not full_rank:
@@ -68,44 +69,25 @@ def significance(
     results = []
 
     for _ in range(n):
-        ols_out = ols(A_pinv, A_rank, b, features, m, y_sq)
+        ols_out = ols(A_pinv, b, features, m, y_sq)
 
         idx = ols_out[T_VALUE].arg_min()
         row = ols_out.row(idx, named=True)
         results.append(pl.DataFrame(row))
 
-        A, b, features, A_pinv, A_rank, full_rank = downdate(A, b, features, A_pinv, full_rank, idx)
+        A, b, features, A_pinv = downdate(A, b, features, A_pinv, full_rank, idx)
 
-    return pl.concat(results).sort(T_VALUE, descending=True)
-
-
-def pinv_rank(A: NDArray) -> tuple[NDArray, int]:
-    if A.size == 0:
-        A_pinv = np.array([], dtype=A.dtype).reshape(0, 0)
-        A_rank = 0
-        return A_pinv, A_rank
-
-    U, s, Vh = np.linalg.svd(A, full_matrices=False, hermitian=True)
-    tol = np.max(s) * max(A.shape) * np.finfo(s.dtype).eps
-
-    nonzero = s > tol
-    s_inv = np.zeros_like(s)
-    s_inv[nonzero] = 1 / s[nonzero]
-
-    A_pinv = Vh.T @ np.diag(s_inv) @ U.T
-    A_rank = np.sum(nonzero)
-    return A_pinv, A_rank
+    return pl.concat(results).sort([T_VALUE, FEATURE_NAME], descending=[True, False])
 
 
 def ols(
     A_pinv: NDArray,
-    A_rank: int,
     b: NDArray,
     features: list[str],
     m: int,
     y_sq: float,
 ) -> pl.DataFrame:
-    residual_dof = m - A_rank
+    residual_dof = m - A_pinv.shape[0]
 
     beta = A_pinv @ b  # (n,)
     rss = y_sq - np.dot(b, beta)  # (1,)
@@ -146,10 +128,7 @@ def downdate(
         G = A_pinv[idx, mask]  # (1, n - 1)
         H = A_pinv[idx, idx]  # (1, 1)
         A_pinv_down = E - np.outer(G, G) / H  # (n - 1, n - 1)
-        A_rank_down = n - 1
     else:
-        A_pinv_down, A_rank_down = pinv_rank(A_down)
+        A_pinv_down = np.linalg.pinv(A_down)
 
-    full_rank_down = A_rank_down == A_down.shape[0]
-
-    return A_down, b_down, features_down, A_pinv_down, A_rank_down, full_rank_down
+    return A_down, b_down, features_down, A_pinv_down

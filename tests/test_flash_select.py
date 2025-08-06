@@ -17,7 +17,6 @@ from flash_select.flash_select import (
     downdate,
     flash_select,
     ols,
-    pinv_rank,
     shap_values,
 )
 
@@ -121,20 +120,11 @@ class TestShapValues:
         assert np.allclose(y, b + np.sum(S, axis=1), atol=tol, rtol=tol)
 
 
-def test_pinv_rank(A: NDArray) -> None:
-    A_pinv_0, A_rank_0 = pinv_rank(A)
-    A_pinv_1 = np.linalg.pinv(A)
-    A_rank_1 = np.linalg.matrix_rank(A)
-    assert np.allclose(A_pinv_0, A_pinv_1, atol=tol, rtol=tol)
-    assert A_rank_0 == A_rank_1
-    assert A_pinv_0.dtype == np.float32
-
-
 def test_downdate(A: NDArray, b: NDArray, idx: int) -> None:
     A_pinv = np.linalg.pinv(A)
     full_rank = np.linalg.matrix_rank(A) == A.shape[0]
 
-    A_down, _, _, A_pinv_down, A_rank_down, _ = downdate(A, b, FEATURES, A_pinv, full_rank, idx)
+    A_down, _, _, A_pinv_down = downdate(A, b, FEATURES, A_pinv, full_rank, idx)
 
     assert A_down.shape == (N - 1, N - 1)
     assert A_down.dtype == np.float32
@@ -142,7 +132,6 @@ def test_downdate(A: NDArray, b: NDArray, idx: int) -> None:
     assert A_pinv_down.shape == (N - 1, N - 1)
     assert A_pinv_down.dtype == np.float32
 
-    assert A_rank_down == np.linalg.matrix_rank(A_down)
     assert np.allclose(A_pinv_down, np.linalg.pinv(A_down), atol=tol, rtol=tol)
 
 
@@ -151,7 +140,7 @@ def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> Non
         df_S = pd.DataFrame(S, columns=features)
         df_y = pd.Series(y, name="target")
         model = OLS(df_y, df_S)
-        result = model.fit()
+        result = model.fit_regularized(alpha=0.0, refit=True)
         table = result.summary2().tables[1]
         df = pl.from_pandas(table, nan_to_null=False, include_index=True)
         rename_by = {
@@ -164,8 +153,7 @@ def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> Non
         return df
 
     A_pinv = np.linalg.pinv(A)
-    A_rank = np.linalg.matrix_rank(A)
-    df_0 = ols(A_pinv, A_rank, b, FEATURES, M, y_sq)
+    df_0 = ols(A_pinv, b, FEATURES, M, y_sq)
     df_1 = ols_statsmodels(S, y, FEATURES)
 
     df_1 = df_1.with_columns(
@@ -188,6 +176,8 @@ def test_flash_select(tree_model: XGBRegressor, X: NDArray, y: NDArray, use_all_
     X_df = pd.DataFrame(X, columns=FEATURES)
     y_df = pd.Series(y, name="target")
     df_shap_select = shap_select(tree_model, X_df, y_df, task="regression", alpha=0.0)
-    df_shap_select = pl.from_pandas(df_shap_select, nan_to_null=False).sort(T_VALUE, descending=True)
+    df_shap_select = pl.from_pandas(df_shap_select, nan_to_null=False).sort(
+        [T_VALUE, FEATURE_NAME], descending=[True, False]
+    )
 
     assert_frame_equal(df_flash_select, df_shap_select, check_dtypes=False, rtol=tol, atol=tol)
