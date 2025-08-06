@@ -117,7 +117,10 @@ def downdate(
     idx: int,
 ) -> tuple[NDArray, NDArray, list[str], NDArray, int, bool]:
     n = A.shape[0]
-    mask = ~np.eye(n, dtype=bool)[:, idx]
+
+    mask = np.ones(n, dtype=bool)
+    mask[idx] = False
+
     A_down = A[mask, :][:, mask]
     b_down = b[mask]
     features_down = [f for f, m in zip(features, mask, strict=True) if m]
