@@ -1,10 +1,23 @@
 import numpy as np
+import pandas as pd
+import polars as pl
 import pytest
 from numpy.typing import NDArray
+from polars.testing import assert_frame_equal
 from shap import Explainer
+from statsmodels.regression.linear_model import OLS
 from xgboost import XGBRegressor
 
-from flash_select.flash_select import downdate, pinv_rank, shap_values
+from flash_select.flash_select import (
+    COEFFICIENT,
+    FEATURE_NAME,
+    STAT_SIGNIFICANCE,
+    T_VALUE,
+    downdate,
+    ols,
+    pinv_rank,
+    shap_values,
+)
 
 N_SEEDS = 10
 M = 100
@@ -129,3 +142,39 @@ def test_downdate(A: NDArray, b: NDArray, idx: int) -> None:
 
     assert A_rank_down == np.linalg.matrix_rank(A_down)
     assert np.allclose(A_pinv_down, np.linalg.pinv(A_down), atol=tol, rtol=tol)
+
+
+def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> None:
+    def ols_statsmodels(S: NDArray, y: NDArray, features: list[str]) -> pl.DataFrame:
+        df_S = pd.DataFrame(S, columns=features)
+        df_y = pd.Series(y, name="target")
+        model = OLS(df_y, df_S)
+        result = model.fit()
+        table = result.summary2().tables[1]
+        df = pl.from_pandas(table, nan_to_null=False, include_index=True)
+        rename_by = {
+            "None": FEATURE_NAME,
+            "t": T_VALUE,
+            "P>|t|": STAT_SIGNIFICANCE,
+            "Coef.": COEFFICIENT,
+        }
+        df = df.rename(rename_by).select(rename_by.values())
+        return df
+
+    A_pinv = np.linalg.pinv(A)
+    A_rank = np.linalg.matrix_rank(A)
+    df_0 = ols(A_pinv, A_rank, b, FEATURES, M, y_sq)
+    df_1 = ols_statsmodels(S, y, FEATURES)
+
+    df_1 = df_1.with_columns(
+        pl.when(pl.col(COEFFICIENT).abs() < 1e-10)
+        .then(float("nan"))
+        .otherwise(pl.col(T_VALUE))
+        .alias(T_VALUE),
+        pl.when(pl.col(COEFFICIENT).abs() < 1e-10)
+        .then(float("nan"))
+        .otherwise(pl.col(STAT_SIGNIFICANCE))
+        .alias(STAT_SIGNIFICANCE)
+    )  # fmt: skip
+
+    assert_frame_equal(df_0, df_1, check_dtypes=False, rtol=tol, atol=tol)
