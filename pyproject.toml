@@ -11,20 +11,27 @@ requires-python = ">=3.10"
 
 dependencies = [
     "numpy>=2.0.0",
-    "pandas>=2.0.0",
+    "polars>=1.0.0",
     "scipy>=1.0.0",
     "shap>=0.47.0",
 ]
 
 [dependency-groups]
 dev = [
-    "polars>=1.0.0",
-    "pre-commit>=4.2.0",  # Git hooks for code quality
-    "pyright>=1.1.403",   # Static type checker
-    "pytest>=8.4.1",      # Testing framework
-    "pytest-cov>=6.2.1",  # Test coverage reporting
-    "ruff>=0.12.7",       # Linter and formatter
+    "pandas>=2.3.1",
+    "pre-commit>=4.2.0", # Git hooks for code quality
+    "pyarrow>=21.0.0",
+    "pyright>=1.1.403", # Static type checker
+    "pytest>=8.4.1", # Testing framework
+    "pytest-cov>=6.2.1", # Test coverage reporting
+    "ruff>=0.12.7", # Linter and formatter
+    "statsmodels>=0.14.5",
+    "xgboost>=3.0.3",
+    "shap-select",
 ]
+
+[tool.uv.sources]
+shap-select = { git = "ssh://git@github.com/transferwise/shap-select" }
 
 # ------------------------------------------------------------------------------
 # Build

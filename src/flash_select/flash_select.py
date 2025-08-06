@@ -2,7 +2,7 @@ import warnings
 from typing import Any
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import scipy
 from numpy.typing import NDArray
 from shap import Explainer
@@ -16,15 +16,15 @@ SELECTED = "selected"
 
 def flash_select(
     tree_model: Any,
-    X: pd.DataFrame,
-    y: pd.Series,
+    X: NDArray,
+    y: NDArray,
+    features: list[str],
     threshold: float = 0.05,
-) -> pd.DataFrame:
-    features = X.columns.tolist()
-    X = X.to_numpy(dtype=np.float32)
-    y = y.to_numpy(dtype=np.float32)
+) -> pl.DataFrame:
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
 
-    S = shap_values(tree_model, X)
+    S, _ = shap_values(tree_model, X)
 
     A = S.T @ S
     b = S.T @ y
@@ -33,16 +33,22 @@ def flash_select(
 
     df = significance(A, b, features, m, n, y_sq)
 
-    df[SELECTED] = (df[STAT_SIGNIFICANCE] < threshold).astype(int)
-    df.loc[df[T_VALUE] < 0, SELECTED] = -1
+    df = df.with_columns(
+        pl.when(pl.col(COEFFICIENT) < 0)
+        .then(-1)
+        .when(pl.col(STAT_SIGNIFICANCE) < threshold)
+        .then(1)
+        .otherwise(0)
+        .alias(SELECTED)
+    )
 
     return df
 
 
-def shap_values(tree_model: Any, X: NDArray) -> NDArray:
+def shap_values(tree_model: Any, X: NDArray) -> tuple[NDArray, NDArray]:
     explainer = Explainer(tree_model)
     shap_values = explainer(X)
-    return shap_values.values
+    return shap_values.values, shap_values.base_values
 
 
 def significance(
@@ -52,9 +58,10 @@ def significance(
     m: int,
     n: int,
     y_sq: float,
-) -> pd.DataFrame:
-    A_pinv, A_rank = pinv_rank(A)
-    full_rank: bool = A_rank == n
+) -> pl.DataFrame:
+    A_pinv = np.linalg.pinv(A)
+    A_rank = np.linalg.matrix_rank(A)
+    full_rank = A_rank == n
 
     if not full_rank:
         warnings.warn(f"Matrix A is rank deficient with rank {A_rank} < {n}. Algorithm will be slower.", stacklevel=1)
@@ -62,39 +69,25 @@ def significance(
     results = []
 
     for _ in range(n):
-        ols_out = ols(A_pinv, A_rank, b, features, m, y_sq)
+        ols_out = ols(A_pinv, b, features, m, y_sq)
 
         idx = ols_out[T_VALUE].arg_min()
         row = ols_out.row(idx, named=True)
-        results.append(pd.DataFrame(row))
+        results.append(pl.DataFrame(row))
 
-        A, b, features, A_pinv, A_rank, full_rank = downdate(A, b, features, A_pinv, full_rank, idx)
+        A, b, features, A_pinv = downdate(A, b, features, A_pinv, full_rank, idx)
 
-    return pd.concat(results).sort_values(T_VALUE, ascending=False)
-
-
-def pinv_rank(A: NDArray) -> tuple[NDArray, int]:
-    U, s, Vh = np.linalg.svd(A, full_matrices=False)
-    tol = np.max(s) * max(A.shape) * np.finfo(s.dtype).eps
-
-    nonzero = s > tol
-    s_inv = np.zeros_like(s)
-    s_inv[nonzero] = 1 / s[nonzero]
-
-    A_pinv = Vh.T @ np.diag(s_inv) @ U.T
-    A_rank = np.sum(nonzero)
-    return A_pinv, A_rank
+    return pl.concat(results).sort([T_VALUE, FEATURE_NAME], descending=[True, False])
 
 
 def ols(
     A_pinv: NDArray,
-    A_rank: int,
     b: NDArray,
     features: list[str],
     m: int,
     y_sq: float,
-) -> pd.DataFrame:
-    residual_dof: int = m - A_rank
+) -> pl.DataFrame:
+    residual_dof = m - A_pinv.shape[0]
 
     beta = A_pinv @ b  # (n,)
     rss = y_sq - np.dot(b, beta)  # (1,)
@@ -103,7 +96,7 @@ def ols(
     t_stats = beta / np.sqrt(sigma_sq * inv_diag)  # (n,)
     p_values = 2 * (1 - scipy.stats.t.cdf(np.abs(t_stats), residual_dof))  # (n,)
 
-    df = pd.DataFrame(
+    df = pl.DataFrame(
         {
             FEATURE_NAME: features,
             T_VALUE: t_stats,
@@ -124,7 +117,10 @@ def downdate(
     idx: int,
 ) -> tuple[NDArray, NDArray, list[str], NDArray, int, bool]:
     n = A.shape[0]
-    mask = ~np.eye(n, dtype=bool)[:, idx]
+
+    mask = np.ones(n, dtype=bool)
+    mask[idx] = False
+
     A_down = A[mask, :][:, mask]
     b_down = b[mask]
     features_down = [f for f, m in zip(features, mask, strict=True) if m]
@@ -135,10 +131,7 @@ def downdate(
         G = A_pinv[idx, mask]  # (1, n - 1)
         H = A_pinv[idx, idx]  # (1, 1)
         A_pinv_down = E - np.outer(G, G) / H  # (n - 1, n - 1)
-        A_rank_down = n - 1
     else:
-        A_pinv_down, A_rank_down = pinv_rank(A_down)
+        A_pinv_down = np.linalg.pinv(A_down)
 
-    full_rank_down = A_rank_down == A_down.shape[0]
-
-    return A_down, b_down, features_down, A_pinv_down, A_rank_down, full_rank_down
+    return A_down, b_down, features_down, A_pinv_down

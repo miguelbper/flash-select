@@ -1,5 +1,183 @@
-from flash_select.flash_select import main
+import numpy as np
+import pandas as pd
+import polars as pl
+import pytest
+from numpy.typing import NDArray
+from polars.testing import assert_frame_equal
+from shap import Explainer
+from shap_select import shap_select
+from statsmodels.regression.linear_model import OLS
+from xgboost import XGBRegressor
+
+from flash_select.flash_select import (
+    COEFFICIENT,
+    FEATURE_NAME,
+    STAT_SIGNIFICANCE,
+    T_VALUE,
+    downdate,
+    flash_select,
+    ols,
+    shap_values,
+)
+
+N_SEEDS = 10
+M = 100
+N = 4
+tol = 1e-5
+FEATURES = [f"f{i}" for i in range(N)]
 
 
-def test_main() -> None:
-    main()
+@pytest.fixture(params=range(N_SEEDS))
+def seed(request: pytest.FixtureRequest) -> int:
+    return request.param
+
+
+@pytest.fixture
+def X(seed: int) -> NDArray:
+    rng = np.random.default_rng(seed)
+    X = rng.normal(size=(M, N)).astype(np.float32)
+    return X
+
+
+@pytest.fixture
+def y(seed: int) -> NDArray:
+    rng = np.random.default_rng(seed + N_SEEDS)
+    y = rng.normal(size=(M,)).astype(np.float32)
+    return y
+
+
+@pytest.fixture(params=[True, False])
+def use_all_features(request: pytest.FixtureRequest) -> bool:
+    return request.param
+
+
+@pytest.fixture
+def tree_model(use_all_features: bool, seed: int) -> XGBRegressor:
+    rng = np.random.default_rng(seed + 2 * N_SEEDS)
+    X_train = rng.normal(size=(M, N)).astype(np.float32)
+    y_train = rng.normal(size=(M,)).astype(np.float32)
+
+    if use_all_features:
+        N_ESTIMATORS = 10
+        MAX_DEPTH = 3
+        MAX_LEAVES = 2**MAX_DEPTH
+    else:
+        N_ESTIMATORS = 1
+        MAX_DEPTH = 2
+        MAX_LEAVES = 2**MAX_DEPTH
+
+    model = XGBRegressor(n_estimators=N_ESTIMATORS, max_depth=MAX_DEPTH, max_leaves=MAX_LEAVES, random_state=42)
+    model.fit(X_train, y_train)
+
+    used_features = model.get_booster().get_score().keys()
+    used_all_features = len(used_features) == N
+    assert used_all_features == use_all_features
+
+    return model
+
+
+@pytest.fixture
+def S(tree_model: XGBRegressor, X: NDArray) -> NDArray:
+    explainer = Explainer(tree_model)
+    S = explainer(X)
+    return S.values
+
+
+@pytest.fixture
+def A(S: NDArray) -> NDArray:
+    A = S.T @ S
+    return A
+
+
+@pytest.fixture
+def b(S: NDArray, y: NDArray) -> NDArray:
+    b = S.T @ y
+    return b
+
+
+@pytest.fixture
+def y_sq(y: NDArray) -> float:
+    return np.square(np.linalg.norm(y))
+
+
+@pytest.fixture(params=range(N))
+def idx(request: pytest.FixtureRequest) -> int:
+    return request.param
+
+
+class TestShapValues:
+    def test_shape(self, tree_model: XGBRegressor, X: NDArray) -> None:
+        S, _ = shap_values(tree_model, X)
+        assert S.shape == (M, N)
+
+    def test_dtype(self, tree_model: XGBRegressor, X: NDArray) -> None:
+        S, _ = shap_values(tree_model, X)
+        assert S.dtype == np.float32
+
+    def test_output(self, tree_model: XGBRegressor, X: NDArray) -> None:
+        S, b = shap_values(tree_model, X)
+        y = tree_model.predict(X)
+        assert np.allclose(y, b + np.sum(S, axis=1), atol=tol, rtol=tol)
+
+
+def test_downdate(A: NDArray, b: NDArray, idx: int) -> None:
+    A_pinv = np.linalg.pinv(A)
+    full_rank = np.linalg.matrix_rank(A) == A.shape[0]
+
+    A_down, _, _, A_pinv_down = downdate(A, b, FEATURES, A_pinv, full_rank, idx)
+
+    assert A_down.shape == (N - 1, N - 1)
+    assert A_down.dtype == np.float32
+
+    assert A_pinv_down.shape == (N - 1, N - 1)
+    assert A_pinv_down.dtype == np.float32
+
+    assert np.allclose(A_pinv_down, np.linalg.pinv(A_down), atol=tol, rtol=tol)
+
+
+def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> None:
+    def ols_statsmodels(S: NDArray, y: NDArray, features: list[str]) -> pl.DataFrame:
+        df_S = pd.DataFrame(S, columns=features)
+        df_y = pd.Series(y, name="target")
+        model = OLS(df_y, df_S)
+        result = model.fit_regularized(alpha=0.0, refit=True)
+        table = result.summary2().tables[1]
+        df = pl.from_pandas(table, nan_to_null=False, include_index=True)
+        rename_by = {
+            "None": FEATURE_NAME,
+            "t": T_VALUE,
+            "P>|t|": STAT_SIGNIFICANCE,
+            "Coef.": COEFFICIENT,
+        }
+        df = df.rename(rename_by).select(rename_by.values())
+        return df
+
+    A_pinv = np.linalg.pinv(A)
+    df_0 = ols(A_pinv, b, FEATURES, M, y_sq)
+    df_1 = ols_statsmodels(S, y, FEATURES)
+
+    df_1 = df_1.with_columns(
+        pl.when(pl.col(COEFFICIENT).abs() < 1e-10)
+        .then(float("nan"))
+        .otherwise(pl.col(T_VALUE))
+        .alias(T_VALUE),
+        pl.when(pl.col(COEFFICIENT).abs() < 1e-10)
+        .then(float("nan"))
+        .otherwise(pl.col(STAT_SIGNIFICANCE))
+        .alias(STAT_SIGNIFICANCE)
+    )  # fmt: skip
+
+    assert_frame_equal(df_0, df_1, check_dtypes=False, rtol=tol, atol=tol)
+
+
+def test_flash_select(tree_model: XGBRegressor, X: NDArray, y: NDArray, use_all_features: bool) -> None:
+    df_flash_select = flash_select(tree_model, X, y, FEATURES)
+
+    X_df = pd.DataFrame(X, columns=FEATURES)
+    y_df = pd.Series(y, name="target")
+    df_shap_select = shap_select(tree_model, X_df, y_df, task="regression", alpha=0.0)
+    df_shap_select = pl.from_pandas(df_shap_select, nan_to_null=False).sort(
+        [T_VALUE, FEATURE_NAME], descending=[True, False]
+    )
+
+    assert_frame_equal(df_flash_select, df_shap_select, check_dtypes=False, rtol=tol, atol=tol)
