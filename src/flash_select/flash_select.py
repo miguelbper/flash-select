@@ -60,7 +60,7 @@ def significance(
     y_sq: float,
 ) -> pl.DataFrame:
     A_pinv, A_rank = pinv_rank(A)
-    full_rank: bool = A_rank == n
+    full_rank = A_rank == n
 
     if not full_rank:
         warnings.warn(f"Matrix A is rank deficient with rank {A_rank} < {n}. Algorithm will be slower.", stacklevel=1)
@@ -80,7 +80,12 @@ def significance(
 
 
 def pinv_rank(A: NDArray) -> tuple[NDArray, int]:
-    U, s, Vh = np.linalg.svd(A, full_matrices=False)
+    if A.size == 0:
+        A_pinv = np.array([], dtype=A.dtype).reshape(0, 0)
+        A_rank = 0
+        return A_pinv, A_rank
+
+    U, s, Vh = np.linalg.svd(A, full_matrices=False, hermitian=True)
     tol = np.max(s) * max(A.shape) * np.finfo(s.dtype).eps
 
     nonzero = s > tol
@@ -100,7 +105,7 @@ def ols(
     m: int,
     y_sq: float,
 ) -> pl.DataFrame:
-    residual_dof: int = m - A_rank
+    residual_dof = m - A_rank
 
     beta = A_pinv @ b  # (n,)
     rss = y_sq - np.dot(b, beta)  # (1,)

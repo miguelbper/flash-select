@@ -5,6 +5,7 @@ import pytest
 from numpy.typing import NDArray
 from polars.testing import assert_frame_equal
 from shap import Explainer
+from shap_select import shap_select
 from statsmodels.regression.linear_model import OLS
 from xgboost import XGBRegressor
 
@@ -14,6 +15,7 @@ from flash_select.flash_select import (
     STAT_SIGNIFICANCE,
     T_VALUE,
     downdate,
+    flash_select,
     ols,
     pinv_rank,
     shap_values,
@@ -178,3 +180,14 @@ def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> Non
     )  # fmt: skip
 
     assert_frame_equal(df_0, df_1, check_dtypes=False, rtol=tol, atol=tol)
+
+
+def test_flash_select(tree_model: XGBRegressor, X: NDArray, y: NDArray, use_all_features: bool) -> None:
+    df_flash_select = flash_select(tree_model, X, y, FEATURES)
+
+    X_df = pd.DataFrame(X, columns=FEATURES)
+    y_df = pd.Series(y, name="target")
+    df_shap_select = shap_select(tree_model, X_df, y_df, task="regression", alpha=0.0)
+    df_shap_select = pl.from_pandas(df_shap_select, nan_to_null=False).sort(T_VALUE, descending=True)
+
+    assert_frame_equal(df_flash_select, df_shap_select, check_dtypes=False, rtol=tol, atol=tol)
