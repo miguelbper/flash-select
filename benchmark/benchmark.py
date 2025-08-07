@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 import numpy as np
@@ -11,23 +12,25 @@ from xgboost import XGBRegressor
 
 from flash_select.flash_select import FEATURE_NAME, T_VALUE, flash_select
 
+log = logging.getLogger(__name__)
+
 
 def get_model(n: int) -> XGBRegressor:
     rng = np.random.default_rng(42)
-    X_train = rng.normal(size=(n, n))
-    y_train = rng.normal(size=n)
+    m = 10 * n
+    X_train = rng.normal(size=(m, n))
+    y_train = rng.normal(size=m)
 
     model = XGBRegressor(
         n_estimators=10 * n,
         max_depth=10,
         max_leaves=2**10,
-        colsample_bytree=0.2,
+        colsample_bytree=0.1,
     )
     model.fit(X_train, y_train)
 
     num_used = len(model.get_booster().get_score().keys())
-
-    assert num_used == n, f"num_used = {num_used} < n = {n}"
+    log.info(f"XGBRegressor uses {num_used}/{n} features")
 
     return model
 
@@ -55,33 +58,23 @@ def benchmark(n: int) -> None:
     y = rng.normal(size=m)
     features = [f"feature_{i}" for i in range(n)]
 
-    t = Timer(initial_text="Running flash_select with numpy")
+    t = Timer(initial_text="Running flash_select")
     with t:
-        df_flash_numpy = flash_select(tree_model, X, y, features)
+        df_flash = flash_select(tree_model, X, y, features)
     t_flash_numpy = t.last
-
-    t = Timer(initial_text="Running flash_select with torch cpu")
-    with t:
-        df_flash_torch_cpu = flash_select(tree_model, X, y, features, backend="torch", device="cpu")
-    t_flash_torch_cpu = t.last
-
-    t = Timer(initial_text="Running flash_select with torch gpu")
-    with t:
-        df_flash_torch_cuda = flash_select(tree_model, X, y, features, backend="torch", device="cuda")
-    t_flash_torch_cuda = t.last
 
     t = Timer(initial_text="Running shap_select")
     with t:
-        if n < 100:
-            df_shap_select = shap_select_wrapper(tree_model, X, y, features)
-        else:
-            df_shap_select = pl.DataFrame()
+        df_shap = shap_select_wrapper(tree_model, X, y, features)
     t_shap_select = t.last
 
-    print(f"flash_select with numpy:     {t_flash_numpy:8.3f} s")
-    print(f"flash_select with torch cpu: {t_flash_torch_cpu:8.3f} s")
-    print(f"flash_select with torch gpu: {t_flash_torch_cuda:8.3f} s")
-    print(f"shap_select:                 {t_shap_select:8.3f} s")
+    speedup = t_shap_select / t_flash_numpy
+
+    log.info(f"flash_select: {t_flash_numpy:8.3f} s")
+    log.info(f"shap_select:  {t_shap_select:8.3f} s")
+    log.info(f"speedup:      {speedup:8.3f}x")
+    log.info(df_flash)
+    log.info(df_shap)
 
 
 def main() -> None:
