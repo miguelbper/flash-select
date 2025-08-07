@@ -1,6 +1,6 @@
 <div align="center">
 
-# flash-Select
+# flash-select
 [![Python](https://img.shields.io/badge/Python-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Code Quality](https://github.com/miguelbper/flash-select/actions/workflows/code-quality.yaml/badge.svg)](https://github.com/miguelbper/flash-select/actions/workflows/code-quality.yaml)
 [![Unit Tests](https://github.com/miguelbper/flash-select/actions/workflows/tests.yaml/badge.svg)](https://github.com/miguelbper/flash-select/actions/workflows/tests.yaml)
@@ -9,7 +9,7 @@
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
-*An extremely fast implementation of [shap-select](https://github.com/transferwise/shap-select).*
+*An extremely fast <u>feature selection method</u> / <u>implementation of [shap-select](https://github.com/transferwise/shap-select)</u>.*
 
 ![img.png](img.png)
 
@@ -23,6 +23,8 @@ flash-select is an extremely fast implementation of [shap-select](https://github
 Given that flash-select has lower algorithmic complexity than shap-select, for larger datasets the speedup will be even greater.
 
 These speedups enable feature selection for datasets with thousands of features. The package is tiny, thoroughly tested, and has few dependencies.
+
+flash-selects works for regression problems on tabular datasets.
 
 ## Installation
 ```bash
