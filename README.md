@@ -1,6 +1,6 @@
 <div align="center">
 
-# flash-select
+# ⚡ flash-select ⚡
 [![Python](https://img.shields.io/badge/Python-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Code Quality](https://github.com/miguelbper/flash-select/actions/workflows/code-quality.yaml/badge.svg)](https://github.com/miguelbper/flash-select/actions/workflows/code-quality.yaml)
 [![Unit Tests](https://github.com/miguelbper/flash-select/actions/workflows/tests.yaml/badge.svg)](https://github.com/miguelbper/flash-select/actions/workflows/tests.yaml)
@@ -24,7 +24,7 @@ Given that flash-select has lower algorithmic complexity than shap-select, for l
 
 These speedups enable feature selection for datasets with thousands of features. The package is tiny, thoroughly tested, and has few dependencies.
 
-flash-selects works for regression problems on tabular datasets.
+flash-select works for regression problems on tabular datasets.
 
 ## Installation
 ```bash
