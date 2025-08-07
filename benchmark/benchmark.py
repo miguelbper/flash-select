@@ -2,17 +2,43 @@ import logging
 from time import time
 from typing import Any
 
+import colorlog
 import numpy as np
 import pandas as pd
 import polars as pl
 from numpy.typing import NDArray
 from shap_select import shap_select
-from tqdm import tqdm
 from xgboost import XGBRegressor
 
 from flash_select.flash_select import FEATURE_NAME, SELECTED, T_VALUE, flash_select
 
-log = logging.getLogger(__name__)
+
+def get_logger() -> logging.Logger:
+    formatter = colorlog.ColoredFormatter(
+        "[%(cyan)s%(asctime)s%(reset)s][%(blue)s%(name)s%(reset)s][%(log_color)s%(levelname)s%(reset)s] - %(message)s",
+        log_colors={
+            "DEBUG": "purple",
+            "INFO": "green",
+            "WARNING": "yellow",
+            "ERROR": "red",
+            "CRITICAL": "red",
+        },
+        reset=True,
+        secondary_log_colors={},
+        style="%",
+    )
+
+    handler = colorlog.StreamHandler()
+    handler.setFormatter(formatter)
+
+    logging.getLogger().setLevel(logging.INFO)
+    logging.getLogger().handlers.clear()
+    logging.getLogger().addHandler(handler)
+
+    return logging.getLogger(__name__)
+
+
+log = get_logger()
 rng = np.random.default_rng(42)
 
 
@@ -58,24 +84,32 @@ def shap_select_regression(
 
 
 def benchmark(m: int, n: int, alpha: float) -> None:
+    log.info(f"Fitting xgboost model with {n} features and {m} samples")
     tree_model = get_model(m, n)
 
     X = rng.normal(size=(m, n))
     y = get_y(X)
     features = [f"feature_{i}" for i in range(n)]
 
+    log.info("Running flash_select...")
     t0 = time()
     df_flash = flash_select(tree_model, X, y, features)
     t_flash = time() - t0
+    log.info(f"flash_select took {t_flash} seconds")
 
+    log.info("Running shap_select...")
     t0 = time()
     df_shap = shap_select_regression(tree_model, X, y, features, alpha=alpha)
     t_shap = time() - t0
+    log.info(f"shap_select took {t_shap} seconds")
 
     speedup = t_shap / t_flash
+    log.info(f"Speedup: {speedup}")
+
     n_xgboost = len(tree_model.get_booster().get_score().keys())
     n_flash = (df_flash[SELECTED] == 1).sum()
     equal_selected = df_flash[SELECTED].equals(df_shap[SELECTED])
+    log.info(f"Same set of selected features? {'yes' if equal_selected else 'no'}")
 
     df = pl.DataFrame(
         {
@@ -96,13 +130,15 @@ def benchmark(m: int, n: int, alpha: float) -> None:
 def main() -> None:
     dfs = []
 
-    for n in tqdm(range(50, 500 + 1, 50)):
+    for i in range(5, 10):
+        n = 2**i
         m = 100 * n
+        log.info(f"Running benchmark for n = {n} features and m = {m} samples")
         df = benchmark(m, n, alpha=1e-6)
         dfs.append(df)
 
     df = pl.concat(dfs)
-    print(df)
+    log.info(df)
 
 
 if __name__ == "__main__":

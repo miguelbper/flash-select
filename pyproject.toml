@@ -28,6 +28,7 @@ dev = [
     "statsmodels>=0.14.5",
     "xgboost>=3.0.3",
     "shap-select",
+    "colorlog>=6.9.0",
 ]
 
 [tool.uv.sources]
