@@ -1,4 +1,3 @@
-import warnings
 from typing import Any
 
 import numpy as np
@@ -26,12 +25,29 @@ def flash_select(
 
     S, _ = shap_values(tree_model, X)
 
+    feature_scores = tree_model.get_booster().get_score()
+    mask = np.array([f"f{i}" in feature_scores for i in range(X.shape[1])])
+    unused_features = list(map(str, np.array(features)[~mask]))
+    num_unused_features = len(unused_features)
+    df_unused_features = pl.DataFrame(
+        {
+            FEATURE_NAME: unused_features,
+            T_VALUE: np.full(num_unused_features, np.nan),
+            STAT_SIGNIFICANCE: np.full(num_unused_features, np.nan),
+            COEFFICIENT: np.zeros(num_unused_features),
+        }
+    )
+    features = list(map(str, np.array(features)[mask]))
+    S = S[:, mask]
+
     A = S.T @ S
     b = S.T @ y
     m, n = S.shape
     y_sq = np.square(np.linalg.norm(y))
 
-    df = significance(A, b, features, m, n, y_sq)
+    df = significance(A, b, features, m, n, num_unused_features, y_sq)
+
+    df = pl.concat([df, df_unused_features])
 
     df = df.with_columns(
         pl.when(pl.col(COEFFICIENT) < 0)
@@ -40,7 +56,7 @@ def flash_select(
         .then(1)
         .otherwise(0)
         .alias(SELECTED)
-    )
+    ).sort([T_VALUE, FEATURE_NAME], descending=[True, False])
 
     return df
 
@@ -57,27 +73,22 @@ def significance(
     features: list[str],
     m: int,
     n: int,
+    num_unused_features: int,
     y_sq: float,
 ) -> pl.DataFrame:
     A_pinv = np.linalg.pinv(A)
-    A_rank = np.linalg.matrix_rank(A)
-    full_rank = A_rank == n
-
-    if not full_rank:
-        warnings.warn(f"Matrix A is rank deficient with rank {A_rank} < {n}. Algorithm will be slower.", stacklevel=1)
-
     results = []
 
     for _ in range(n):
-        ols_out = ols(A_pinv, b, features, m, y_sq)
+        ols_out = ols(A_pinv, b, features, m, num_unused_features, y_sq)
 
         idx = ols_out[T_VALUE].arg_min()
         row = ols_out.row(idx, named=True)
         results.append(pl.DataFrame(row))
 
-        A, b, features, A_pinv = downdate(A, b, features, A_pinv, full_rank, idx)
+        A, b, features, A_pinv = downdate(A, b, features, A_pinv, idx)
 
-    return pl.concat(results).sort([T_VALUE, FEATURE_NAME], descending=[True, False])
+    return pl.concat(results)
 
 
 def ols(
@@ -85,9 +96,10 @@ def ols(
     b: NDArray,
     features: list[str],
     m: int,
+    num_unused_features: int,
     y_sq: float,
 ) -> pl.DataFrame:
-    residual_dof = m - A_pinv.shape[0]
+    residual_dof = m - (A_pinv.shape[0] + num_unused_features)
 
     beta = A_pinv @ b  # (n,)
     rss = y_sq - np.dot(b, beta)  # (1,)
@@ -113,9 +125,8 @@ def downdate(
     b: NDArray,
     features: list[str],
     A_pinv: NDArray,
-    full_rank: bool,
     idx: int,
-) -> tuple[NDArray, NDArray, list[str], NDArray, int, bool]:
+) -> tuple[NDArray, NDArray, list[str], NDArray]:
     n = A.shape[0]
 
     mask = np.ones(n, dtype=bool)
@@ -125,13 +136,10 @@ def downdate(
     b_down = b[mask]
     features_down = [f for f, m in zip(features, mask, strict=True) if m]
 
-    if full_rank:
-        # Using: https://en.wikipedia.org/wiki/Block_matrix#Computing_submatrix_inverses_from_the_full_inverse
-        E = A_pinv[mask, :][:, mask]  # (n - 1, n - 1)
-        G = A_pinv[idx, mask]  # (1, n - 1)
-        H = A_pinv[idx, idx]  # (1, 1)
-        A_pinv_down = E - np.outer(G, G) / H  # (n - 1, n - 1)
-    else:
-        A_pinv_down = np.linalg.pinv(A_down)
+    # Using: https://en.wikipedia.org/wiki/Block_matrix#Computing_submatrix_inverses_from_the_full_inverse
+    E = A_pinv[mask, :][:, mask]  # (n - 1, n - 1)
+    G = A_pinv[idx, mask]  # (1, n - 1)
+    H = A_pinv[idx, idx]  # (1, 1)
+    A_pinv_down = E - np.outer(G, G) / H  # (n - 1, n - 1)
 
     return A_down, b_down, features_down, A_pinv_down

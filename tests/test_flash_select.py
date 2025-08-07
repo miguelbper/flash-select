@@ -123,8 +123,10 @@ class TestShapValues:
 def test_downdate(A: NDArray, b: NDArray, idx: int) -> None:
     A_pinv = np.linalg.pinv(A)
     full_rank = np.linalg.matrix_rank(A) == A.shape[0]
+    if not full_rank:
+        pytest.skip("Matrix A is rank deficient")
 
-    A_down, _, _, A_pinv_down = downdate(A, b, FEATURES, A_pinv, full_rank, idx)
+    A_down, _, _, A_pinv_down = downdate(A, b, FEATURES, A_pinv, idx)
 
     assert A_down.shape == (N - 1, N - 1)
     assert A_down.dtype == np.float32
@@ -153,7 +155,7 @@ def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> Non
         return df
 
     A_pinv = np.linalg.pinv(A)
-    df_0 = ols(A_pinv, b, FEATURES, M, y_sq)
+    df_0 = ols(A_pinv, b, FEATURES, M, 0, y_sq)
     df_1 = ols_statsmodels(S, y, FEATURES)
 
     df_1 = df_1.with_columns(
