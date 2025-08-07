@@ -215,7 +215,7 @@ dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-cov", specifier = ">=6.2.1" },
     { name = "ruff", specifier = ">=0.12.7" },
-    { name = "shap-select", git = "ssh://git@github.com/transferwise/shap-select" },
+    { name = "shap-select", git = "https://github.com/transferwise/shap-select" },
     { name = "statsmodels", specifier = ">=0.14.5" },
     { name = "xgboost", specifier = ">=3.0.3" },
 ]
@@ -948,7 +948,7 @@ wheels = [
 [[package]]
 name = "shap-select"
 version = "0.1.2"
-source = { git = "ssh://git@github.com/transferwise/shap-select#10af206b6269feedbe5bdeb9f8b6f3d4746cf212" }
+source = { git = "https://github.com/transferwise/shap-select#10af206b6269feedbe5bdeb9f8b6f3d4746cf212" }
 dependencies = [
     { name = "numpy" },
     { name = "pandas" },
