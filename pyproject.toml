@@ -30,6 +30,7 @@ dev = [
     "shap-select",
     "codetiming>=1.4.0",
     "hydra-zen>=0.15.0",
+    "openml>=0.15.1",
 ]
 
 [tool.uv.sources]
