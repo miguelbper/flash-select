@@ -11,14 +11,16 @@
 
 *An extremely fast implementation of [shap-select](https://github.com/transferwise/shap-select).*
 
-![project-image.png](project-image.png)
+![img.png](img.png)
 
 </div>
 
 ---
 
 ## Description
-flash-select is an extremely fast implementation of [shap-select](https://github.com/transferwise/shap-select), a very nice feature selection method. So, flash-select gives the same output as shap-select (more on this below) while being significantly faster: for a dataset with 25600 examples and 256 features, flash-select is ... faster.
+flash-select is an extremely fast implementation of [shap-select](https://github.com/transferwise/shap-select), a very nice feature selection method. So, flash-select gives the same output as shap-select (more on this below) while being significantly faster: for a dataset with 25600 examples and 256 features, **flash-select is ~300x faster**.
+
+Given that flash-select has lower algorithmic complexity than shap-select, for larger datasets the speedup will be even greater.
 
 These speedups enable feature selection for datasets with thousands of features. The package is tiny, thoroughly tested, and has few dependencies (numpy, polars, scipy, shap).
 
