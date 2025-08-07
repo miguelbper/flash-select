@@ -33,7 +33,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-shap-select = { git = "ssh://git@github.com/transferwise/shap-select" }
+shap-select = { git = "https://github.com/transferwise/shap-select" }
 
 # ------------------------------------------------------------------------------
 # Build
