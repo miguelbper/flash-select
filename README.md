@@ -45,13 +45,13 @@ uv run benchmark/benchmark.py
 ## How is it so fast?
 The original implementation of shap-select iterativelly performs a linear regression on the dataset (Shapley values, target), where at each iteration we delete one column of the Shapley values matrix. With no regularization, the linear regression coeficients $\beta$ are given by:
 
-$
+$$
     \begin{align}
     A &= S^T S \\
     b &= S^T y \\
     \beta &= A^{-1} b.
     \end{align}
-$
+$$
 
 We can save on computation by doing linear regression explicitly (instead of calling an external library) and updating (instead of recomputing from scratch) the matrix $A^{-1}$.
 
