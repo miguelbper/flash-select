@@ -1,6 +1,6 @@
 <div align="center">
 
-# Project Title
+# flash-Select
 [![Python](https://img.shields.io/badge/Python-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Code Quality](https://github.com/miguelbper/flash-select/actions/workflows/code-quality.yaml/badge.svg)](https://github.com/miguelbper/flash-select/actions/workflows/code-quality.yaml)
 [![Unit Tests](https://github.com/miguelbper/flash-select/actions/workflows/tests.yaml/badge.svg)](https://github.com/miguelbper/flash-select/actions/workflows/tests.yaml)
@@ -18,18 +18,18 @@
 ---
 
 ## Description
-flash-select is an extremely fast implementation of [shap-select](https://github.com/transferwise/shap-select), a very nice feature selection method. So, flash-select gives the same output as shap-select (more on this below) while being significantly faster: for a dataset with 25600 examples and 256 features, **flash-select is ~300x faster**.
+flash-select is an extremely fast implementation of [shap-select](https://github.com/transferwise/shap-select), a very nice feature selection method. flash-select gives the same output as shap-select (more on this below) while being significantly faster: for a dataset with 25,600 examples and 256 features, **flash-select is ~300x faster**.
 
 Given that flash-select has lower algorithmic complexity than shap-select, for larger datasets the speedup will be even greater.
 
-These speedups enable feature selection for datasets with thousands of features. The package is tiny, thoroughly tested, and has few dependencies (numpy, polars, scipy, shap).
+These speedups enable feature selection for datasets with thousands of features. The package is tiny, thoroughly tested, and has few dependencies.
 
 ## Installation
 ```bash
 pip install flash-select
 ```
 
-## Run the benchmark
+## Running the Benchmark
 ```bash
 # Clone the project
 git clone git@github.com:miguelbper/flash-select.git
@@ -37,7 +37,7 @@ git clone git@github.com:miguelbper/flash-select.git
 # Install uv if you don't have it yet (from https://docs.astral.sh/uv/)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Move to the project directory. Install (dev) dependencies
+# Move to the project directory and install (dev) dependencies
 uv sync
 
 # Run benchmark
@@ -45,7 +45,7 @@ uv run benchmark/benchmark.py
 ```
 
 ## How is it so fast?
-The original implementation of shap-select iterativelly performs a linear regression on the dataset (Shapley values, target), where at each iteration we delete one column of the Shapley values matrix. With no regularization, the linear regression coeficients $\beta$ are given by:
+The original implementation of shap-select iteratively performs a linear regression on the dataset (Shapley values, target), where at each iteration we delete one column of the Shapley values matrix. With no regularization, the linear regression coefficients $\beta$ are given by:
 
 $$
     \begin{align}
@@ -66,5 +66,5 @@ For these reasons, $\alpha = 0$ in flash-select, which enables speedups of sever
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgements
+## Acknowledgments
 [shap-select](https://github.com/transferwise/shap-select) and its authors.
