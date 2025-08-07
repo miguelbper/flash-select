@@ -183,3 +183,7 @@ cython_debug/
 
 # VSCode settings (unit tests for example)
 .vscode/
+
+# Hydra
+outputs/
+multirun/

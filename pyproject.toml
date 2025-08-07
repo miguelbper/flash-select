@@ -19,15 +19,17 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pandas>=2.3.1",
-    "pre-commit>=4.2.0", # Git hooks for code quality
+    "pre-commit>=4.2.0",
     "pyarrow>=21.0.0",
-    "pyright>=1.1.403", # Static type checker
-    "pytest>=8.4.1", # Testing framework
-    "pytest-cov>=6.2.1", # Test coverage reporting
-    "ruff>=0.12.7", # Linter and formatter
+    "pyright>=1.1.403",
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12.7",
     "statsmodels>=0.14.5",
     "xgboost>=3.0.3",
     "shap-select",
+    "codetiming>=1.4.0",
+    "hydra-zen>=0.15.0",
 ]
 
 [tool.uv.sources]
