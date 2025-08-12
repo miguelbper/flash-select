@@ -31,6 +31,27 @@ flash-select works for regression problems on tabular datasets.
 pip install flash-select
 ```
 
+## Usage
+```python
+from flash_select import flash_select
+import xgboost as xgb
+
+# Train a model
+model = xgb.XGBRegressor()
+model.fit(X_train, y_train)
+
+# Perform feature selection
+selected_features_df = flash_select(
+    model,
+    X_val,
+    y_val,
+    features=feature_names,
+    threshold=0.05
+)
+
+print(selected_features_df)
+```
+
 ## Running the Benchmark
 ```bash
 # Clone the project
