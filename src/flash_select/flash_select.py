@@ -1,4 +1,5 @@
 import warnings
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -12,6 +13,77 @@ T_VALUE = "t-value"
 STAT_SIGNIFICANCE = "stat.significance"
 COEFFICIENT = "coefficient"
 SELECTED = "selected"
+
+
+@dataclass
+class State:
+    n: int
+    A: NDArray  # (n, n)
+    b: NDArray  # (n,)
+    features: NDArray  # (n,)
+    A_inv: NDArray  # (n, n)
+    beta: NDArray  # (n,)
+    rss: NDArray  # (1,)
+
+
+def swap_indices_1d(a: NDArray, i: int, j: int) -> None:
+    a[i], a[j] = a[j], a[i]
+
+
+def swap_indices_2d(a: NDArray, i: int, j: int) -> None:
+    a[i, :], a[j, :] = a[j, :].copy(), a[i, :].copy()
+    a[:, i], a[:, j] = a[:, j].copy(), a[:, i].copy()
+
+
+def downdate_(state: State, idx: int) -> None:
+    n = state.n
+    A = state.A
+    b = state.b
+    features = state.features
+    A_inv = state.A_inv
+    beta = state.beta
+
+    swap_indices_2d(A, idx, n - 1)
+    swap_indices_1d(b, idx, n - 1)
+    swap_indices_1d(features, idx, n - 1)
+    swap_indices_2d(A_inv, idx, n - 1)
+    swap_indices_1d(beta, idx, n - 1)
+
+    G = A_inv[:-1, -1]
+    H = A_inv[-1, -1]
+    G_sub_H = G / H
+    G_sub_H_dot_b = np.dot(G_sub_H, b[:-1])
+    b_0 = b[-1]
+    beta_0 = beta[-1]
+
+    A_inv[:-1, :-1] -= np.outer(G, G_sub_H)
+    beta[:-1] -= G * (b_0 + G_sub_H_dot_b)
+    state.rss += b_0 * beta_0 + H * G_sub_H_dot_b * (b_0 + G_sub_H_dot_b)
+
+
+def ols_(state: State, m: int, num_unused_features: int) -> pd.DataFrame:
+    n = state.n
+    A_inv = state.A_inv[:n, :n]
+    beta = state.beta[:n]
+    rss = state.rss
+    features = state.features[:n]
+
+    residual_dof = m - (n + num_unused_features)
+    sigma_sq = rss / residual_dof
+    inv_diag = np.diag(A_inv)
+    t_stats = beta / np.sqrt(sigma_sq * inv_diag)
+    p_values = 2 * (1 - scipy.stats.t.cdf(np.abs(t_stats), residual_dof))
+
+    df = pd.DataFrame(
+        {
+            FEATURE_NAME: features,
+            T_VALUE: t_stats,
+            STAT_SIGNIFICANCE: p_values,
+            COEFFICIENT: beta,
+        }
+    )
+
+    return df
 
 
 def flash_select(

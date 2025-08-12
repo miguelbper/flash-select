@@ -12,7 +12,9 @@ from flash_select.flash_select import (
     FEATURE_NAME,
     STAT_SIGNIFICANCE,
     T_VALUE,
+    State,
     downdate,
+    downdate_,
     flash_select,
     ols,
     shap_values,
@@ -101,6 +103,31 @@ def y_sq(y: NDArray) -> float:
 @pytest.fixture(params=range(N))
 def idx(request: pytest.FixtureRequest) -> int:
     return request.param
+
+
+def test_downdate_(A, b, y_sq, idx) -> None:
+    n = A.shape[0]
+    A_inv = np.linalg.pinv(A)
+    full_rank = np.linalg.matrix_rank(A) == n
+    if not full_rank:
+        pytest.skip("Matrix A is rank deficient")
+
+    features = np.array(FEATURES)
+    beta = A_inv @ b
+    rss = y_sq - np.dot(b, beta)
+
+    state = State(n, A, b, features, A_inv, beta, rss)
+
+    downdate_(state, idx)
+    A_after = state.A
+    b_after = state.b
+    A_inv_after = state.A_inv
+    beta_after = state.beta
+    rss_after = state.rss
+
+    assert np.allclose(A_inv_after[:-1, :-1], np.linalg.pinv(A_after[:-1, :-1]), atol=tol, rtol=tol)
+    assert np.allclose(beta_after[:-1], A_inv_after[:-1, :-1] @ b_after[:-1], atol=tol, rtol=tol)
+    assert np.allclose(rss_after, y_sq - np.dot(b_after[:-1], beta_after[:-1]), atol=tol, rtol=tol)
 
 
 class TestShapValues:
