@@ -17,73 +17,13 @@ SELECTED = "selected"
 
 @dataclass
 class State:
-    n: int
-    A: NDArray  # (n, n)
-    b: NDArray  # (n,)
-    features: NDArray  # (n,)
-    A_inv: NDArray  # (n, n)
-    beta: NDArray  # (n,)
-    rss: NDArray  # (1,)
-
-
-def swap_indices_1d(a: NDArray, i: int, j: int) -> None:
-    a[i], a[j] = a[j], a[i]
-
-
-def swap_indices_2d(a: NDArray, i: int, j: int) -> None:
-    a[i, :], a[j, :] = a[j, :].copy(), a[i, :].copy()
-    a[:, i], a[:, j] = a[:, j].copy(), a[:, i].copy()
-
-
-def downdate_(state: State, idx: int) -> None:
-    n = state.n
-    A = state.A
-    b = state.b
-    features = state.features
-    A_inv = state.A_inv
-    beta = state.beta
-
-    swap_indices_2d(A, idx, n - 1)
-    swap_indices_1d(b, idx, n - 1)
-    swap_indices_1d(features, idx, n - 1)
-    swap_indices_2d(A_inv, idx, n - 1)
-    swap_indices_1d(beta, idx, n - 1)
-
-    G = A_inv[:-1, -1]
-    H = A_inv[-1, -1]
-    G_sub_H = G / H
-    G_sub_H_dot_b = np.dot(G_sub_H, b[:-1])
-    b_0 = b[-1]
-    beta_0 = beta[-1]
-
-    A_inv[:-1, :-1] -= np.outer(G, G_sub_H)
-    beta[:-1] -= G * (b_0 + G_sub_H_dot_b)
-    state.rss += b_0 * beta_0 + H * G_sub_H_dot_b * (b_0 + G_sub_H_dot_b)
-
-
-def ols_(state: State, m: int, num_unused_features: int) -> pd.DataFrame:
-    n = state.n
-    A_inv = state.A_inv[:n, :n]
-    beta = state.beta[:n]
-    rss = state.rss
-    features = state.features[:n]
-
-    residual_dof = m - (n + num_unused_features)
-    sigma_sq = rss / residual_dof
-    inv_diag = np.diag(A_inv)
-    t_stats = beta / np.sqrt(sigma_sq * inv_diag)
-    p_values = 2 * (1 - scipy.stats.t.cdf(np.abs(t_stats), residual_dof))
-
-    df = pd.DataFrame(
-        {
-            FEATURE_NAME: features,
-            T_VALUE: t_stats,
-            STAT_SIGNIFICANCE: p_values,
-            COEFFICIENT: beta,
-        }
-    )
-
-    return df
+    A: NDArray[np.float32]  # (n, n)
+    b: NDArray[np.float32]  # (n,)
+    features: NDArray[np.str_]  # (n,)
+    A_inv: NDArray[np.float32]  # (n, n)
+    beta: NDArray[np.float32]  # (n,)
+    rss: NDArray[np.float32]  # (1,)
+    residual_dof: int
 
 
 def flash_select(
@@ -93,69 +33,37 @@ def flash_select(
     features: list[str],
     threshold: float = 0.05,
 ) -> pd.DataFrame:
-    """Perform feature selection using the Flash Select algorithm.
-
-    This function implements a feature selection method that combines SHAP values
-    with statistical significance testing to identify important features in tree-based models.
-    It iteratively removes the least significant features based on t-statistics.
-
-    Parameters
-    ----------
-    tree_model : Any
-        A tree-based model (e.g., XGBoost, LightGBM) that supports SHAP explanation.
-        Must have a `get_booster()` method that returns an object with `get_score()`.
-    X : NDArray
-        Feature matrix of shape (n_samples, n_features) where n_samples is the number
-        of samples and n_features is the number of features.
-    y : NDArray
-        Target variable of shape (n_samples,) containing the response values.
-    features : list[str]
-        List of feature names corresponding to the columns in X.
-    threshold : float, default=0.05
-        Significance threshold for feature selection. Features with p-values above
-        this threshold will be marked as not selected.
-
-    Returns
-    -------
-    pd.DataFrame
-        A DataFrame containing feature selection results with columns:
-        - feature name: Name of the feature
-        - t-value: T-statistic for the feature
-        - stat.significance: P-value for statistical significance
-        - coefficient: Estimated coefficient for the feature
-        - selected: Selection status (1=selected, 0=not selected, -1=negative coefficient)
-
-        The DataFrame is sorted by t-value (descending) and feature name (ascending).
-
-    Notes
-    -----
-    The algorithm works by:
-    1. Computing SHAP values for all features
-    2. Identifying unused features (those not used by the tree model)
-    3. Iteratively performing OLS regression on SHAP values
-    4. Removing the least significant feature in each iteration
-    5. Computing t-statistics and p-values for feature significance
-
-    Examples
-    --------
-    >>> import xgboost as xgb
-    >>> from flash_select import flash_select
-    >>>
-    >>> # Train a model
-    >>> model = xgb.XGBRegressor()
-    >>> model.fit(X_train, y_train)
-    >>>
-    >>> # Perform feature selection
-    >>> result = flash_select(model, X_test, y_test, feature_names)
-    >>> print(result)
-    """
     X = X.astype(np.float32)
     y = y.astype(np.float32)
+    features = np.array(features, dtype=np.str_)
 
-    S, _ = shap_values(tree_model, X)
+    S = shap_values(tree_model, X)
 
+    df_unused_features, S, features = remove_unused_features(tree_model, S, features)
+    num_unused_features = len(df_unused_features)
+
+    state = initial_state(S, y, features, num_unused_features)
+
+    if np.linalg.matrix_rank(state.A) < state.A.shape[0]:
+        warnings.warn(
+            "Matrix A is not full rank! May not get correct results. Recommended: try again with a deeper tree model.",
+            stacklevel=1,
+        )
+
+    df = significance(state)
+
+    df = pd.concat([df, df_unused_features])
+    df[SELECTED] = np.where(df[COEFFICIENT] < 0, -1, np.where(df[STAT_SIGNIFICANCE] < threshold, 1, 0))
+    df = df.sort_values(by=[T_VALUE, FEATURE_NAME], ascending=[False, True])
+    df = df.reset_index(drop=True)
+    return df
+
+
+def remove_unused_features(
+    tree_model: Any, S: NDArray[np.float32], features: NDArray[np.str_]
+) -> tuple[pd.DataFrame, NDArray[np.float32], NDArray[np.str_]]:
     feature_scores = tree_model.get_booster().get_score()
-    mask = np.array([f"f{i}" in feature_scores for i in range(X.shape[1])])
+    mask = np.array([f"f{i}" in feature_scores for i in range(S.shape[1])])
     unused_features = list(map(str, np.array(features)[~mask]))
     num_unused_features = len(unused_features)
     df_unused_features = pd.DataFrame(
@@ -166,30 +74,28 @@ def flash_select(
             COEFFICIENT: np.zeros(num_unused_features),
         }
     )
-    features = list(map(str, np.array(features)[mask]))
+    features = np.array(features)[mask]
     S = S[:, mask]
+    return df_unused_features, S, features
 
+
+def initial_state(
+    S: NDArray[np.float32],
+    y: NDArray[np.float32],
+    features: NDArray[np.str_],
+    num_unused_features: int,
+) -> State:
     A = S.T @ S
     b = S.T @ y
+    A_inv = np.linalg.pinv(A)
+    beta = A_inv @ b
+    rss = np.square(np.linalg.norm(y)) - np.dot(b, beta)
     m, n = S.shape
-    y_sq = np.square(np.linalg.norm(y))
-
-    if np.linalg.matrix_rank(A) < n:
-        warnings.warn(
-            "Matrix A is not full rank! May not get correct results. Recommended: try again with a deeper tree model.",
-            stacklevel=1,
-        )
-
-    df = significance(A, b, features, m, n, num_unused_features, y_sq)
-
-    df = pd.concat([df, df_unused_features])
-    df[SELECTED] = np.where(df[COEFFICIENT] < 0, -1, np.where(df[STAT_SIGNIFICANCE] < threshold, 1, 0))
-    df = df.sort_values(by=[T_VALUE, FEATURE_NAME], ascending=[False, True])
-    df = df.reset_index(drop=True)
-    return df
+    residual_dof = m - (n + num_unused_features)
+    return State(A, b, features, A_inv, beta, rss, residual_dof)
 
 
-def shap_values(tree_model: Any, X: NDArray) -> tuple[NDArray, NDArray]:
+def shap_values(tree_model: Any, X: NDArray[np.float32]) -> NDArray[np.float32]:
     """Compute SHAP values for a tree-based model.
 
     Parameters
@@ -208,176 +114,70 @@ def shap_values(tree_model: Any, X: NDArray) -> tuple[NDArray, NDArray]:
     """
     explainer = Explainer(tree_model)
     shap_values = explainer(X)
-    return shap_values.values, shap_values.base_values
+    return shap_values.values
 
 
-def significance(
-    A: NDArray,
-    b: NDArray,
-    features: list[str],
-    m: int,
-    n: int,
-    num_unused_features: int,
-    y_sq: float,
-) -> pd.DataFrame:
-    """Perform iterative feature selection using statistical significance
-    testing.
-
-    This function implements the core algorithm that iteratively removes the least
-    significant feature based on t-statistics from OLS regression on SHAP values.
-
-    Parameters
-    ----------
-    A : NDArray
-        Matrix A = S^T @ S where S are the SHAP values, shape (n_features, n_features).
-    b : NDArray
-        Vector b = S^T @ y where y is the target variable, shape (n_features,).
-    features : list[str]
-        List of feature names corresponding to the features in A and b.
-    m : int
-        Number of samples (rows in original SHAP matrix).
-    n : int
-        Number of features (columns in original SHAP matrix).
-    num_unused_features : int
-        Number of features not used by the tree model.
-    y_sq : float
-        Squared L2 norm of the target variable (y^T @ y).
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame containing significance results for all features with columns:
-        - feature name: Name of the feature
-        - t-value: T-statistic for the feature
-        - stat.significance: P-value for statistical significance
-        - coefficient: Estimated coefficient for the feature
-    """
-    A_pinv = np.linalg.pinv(A)
+def significance(state: State) -> pd.DataFrame:
+    n = len(state.features)
     results = []
 
     for _ in range(n):
-        ols_out = ols(A_pinv, b, features, m, num_unused_features, y_sq)
+        ols_out = ols(state)
 
         idx = ols_out[T_VALUE].argmin()
         row = ols_out.iloc[idx].to_dict()
         results.append(pd.DataFrame([row]))
 
-        A, b, features, A_pinv = downdate(A, b, features, A_pinv, idx)
+        state = downdate(state, idx)
 
     return pd.concat(results)
 
 
-def ols(
-    A_pinv: NDArray,
-    b: NDArray,
-    features: list[str],
-    m: int,
-    num_unused_features: int,
-    y_sq: float,
-) -> pd.DataFrame:
-    """Perform Ordinary Least Squares (OLS) regression and compute significance
-    statistics.
-
-    Parameters
-    ----------
-    A_pinv : NDArray
-        Pseudo-inverse of matrix A, shape (n_features, n_features).
-    b : NDArray
-        Vector b = S^T @ y, shape (n_features,).
-    features : list[str]
-        List of feature names.
-    m : int
-        Number of samples.
-    num_unused_features : int
-        Number of features not used by the tree model.
-    y_sq : float
-        Squared L2 norm of the target variable.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame containing OLS results with columns:
-        - feature name: Name of the feature
-        - t-value: T-statistic for the feature
-        - stat.significance: P-value for statistical significance
-        - coefficient: Estimated coefficient for the feature
-    """
-    residual_dof = m - (A_pinv.shape[0] + num_unused_features)
-
-    beta = A_pinv @ b  # (n,)
-    rss = y_sq - np.dot(b, beta)  # (1,)
-    sigma_sq = rss / residual_dof  # (1,)
-    inv_diag = np.diag(A_pinv)  # (n,)
-    t_stats = beta / np.sqrt(sigma_sq * inv_diag)  # (n,)
-    p_values = 2 * (1 - scipy.stats.t.cdf(np.abs(t_stats), residual_dof))  # (n,)
+def ols(state: State) -> pd.DataFrame:
+    sigma_sq = state.rss / state.residual_dof
+    inv_diag = np.diag(state.A_inv)
+    t_stats = state.beta / np.sqrt(sigma_sq * inv_diag)
+    p_values = 2 * (1 - scipy.stats.t.cdf(np.abs(t_stats), state.residual_dof))
 
     df = pd.DataFrame(
         {
-            FEATURE_NAME: features,
+            FEATURE_NAME: state.features,
             T_VALUE: t_stats,
             STAT_SIGNIFICANCE: p_values,
-            COEFFICIENT: beta,
+            COEFFICIENT: state.beta,
         }
     )
 
     return df
 
 
-def downdate(
-    A: NDArray,
-    b: NDArray,
-    features: list[str],
-    A_pinv: NDArray,
-    idx: int,
-) -> tuple[NDArray, NDArray, list[str], NDArray]:
-    """Downdate matrices and vectors by removing a feature at the specified
-    index.
+def downdate(state: State, idx: int) -> State:
+    A = state.A
+    b = state.b
+    features = state.features
+    A_inv = state.A_inv
+    beta = state.beta
+    rss = state.rss
+    residual_dof = state.residual_dof
 
-    This function removes the least significant feature from the system and updates
-    all related matrices and vectors accordingly. It uses the Sherman-Morrison-Woodbury
-    formula to efficiently update the pseudo-inverse.
+    mask = np.arange(len(features)) != idx
+    b_0 = b[idx]
+    beta_0 = beta[idx]
 
-    Parameters
-    ----------
-    A : NDArray
-        Matrix A, shape (n_features, n_features).
-    b : NDArray
-        Vector b, shape (n_features,).
-    features : list[str]
-        List of feature names.
-    A_pinv : NDArray
-        Pseudo-inverse of matrix A, shape (n_features, n_features).
-    idx : int
-        Index of the feature to remove.
+    A = A[mask, :][:, mask]
+    b = b[mask]
+    features = features[mask]
 
-    Returns
-    -------
-    tuple[NDArray, NDArray, list[str], NDArray]
-        A tuple containing:
-        - A_down: Downdated matrix A, shape (n_features-1, n_features-1)
-        - b_down: Downdated vector b, shape (n_features-1,)
-        - features_down: Updated list of feature names
-        - A_pinv_down: Downdated pseudo-inverse, shape (n_features-1, n_features-1)
+    E = A_inv[mask, :][:, mask]
+    G = A_inv[mask, :][idx]
+    H = A_inv[idx, idx]
+    G_sub_H = G / H
+    G_sub_H_dot_b = np.dot(G_sub_H, b[mask])
 
-    Notes
-    -----
-    The downdating formula used is based on the Sherman-Morrison-Woodbury formula:
-    (A - uv^T)^(-1) = A^(-1) - (A^(-1)uv^T A^(-1)) / (1 + v^T A^(-1)u)
-    where u and v are vectors representing the removed row/column.
-    """
-    n = A.shape[0]
+    A_inv = E - np.outer(G, G_sub_H)
+    beta = beta[mask] - G * (b_0 + G_sub_H_dot_b)
+    rss += b_0 * beta_0 + H * G_sub_H_dot_b * (b_0 + G_sub_H_dot_b)
 
-    mask = np.ones(n, dtype=bool)
-    mask[idx] = False
+    residual_dof -= 1
 
-    A_down = A[mask, :][:, mask]
-    b_down = b[mask]
-    features_down = [f for f, m in zip(features, mask, strict=True) if m]
-
-    # Using: https://en.wikipedia.org/wiki/Block_matrix#Computing_submatrix_inverses_from_the_full_inverse
-    E = A_pinv[mask, :][:, mask]  # (n - 1, n - 1)
-    G = A_pinv[idx, mask]  # (1, n - 1)
-    H = A_pinv[idx, idx]  # (1, 1)
-    A_pinv_down = E - np.outer(G, G) / H  # (n - 1, n - 1)
-
-    return A_down, b_down, features_down, A_pinv_down
+    return State(A, b, features, A_inv, beta, rss, residual_dof)
