@@ -14,6 +14,7 @@ from flash_select.flash_select import (
     T_VALUE,
     downdate,
     flash_select,
+    initial_state,
     ols,
     shap_values,
 )
@@ -103,61 +104,61 @@ def idx(request: pytest.FixtureRequest) -> int:
     return request.param
 
 
-# def test_downdate_(A, b, y_sq, idx) -> None:
-#     n = A.shape[0]
-#     A_inv = np.linalg.pinv(A)
-#     full_rank = np.linalg.matrix_rank(A) == n
-#     if not full_rank:
-#         pytest.skip("Matrix A is rank deficient")
-
-#     features = np.array(FEATURES)
-#     beta = A_inv @ b
-#     rss = y_sq - np.dot(b, beta)
-
-#     state = State(n, A, b, features, A_inv, beta, rss)
-
-#     downdate_(state, idx)
-#     A_after = state.A
-#     b_after = state.b
-#     A_inv_after = state.A_inv
-#     beta_after = state.beta
-#     rss_after = state.rss
-
-#     assert np.allclose(A_inv_after[:-1, :-1], np.linalg.pinv(A_after[:-1, :-1]), atol=tol, rtol=tol)
-#     assert np.allclose(beta_after[:-1], A_inv_after[:-1, :-1] @ b_after[:-1], atol=tol, rtol=tol)
-#     assert np.allclose(rss_after, y_sq - np.dot(b_after[:-1], beta_after[:-1]), atol=tol, rtol=tol)
-
-
 class TestShapValues:
     def test_shape(self, tree_model: XGBRegressor, X: NDArray) -> None:
-        S, _ = shap_values(tree_model, X)
+        S = shap_values(tree_model, X)
         assert S.shape == (M, N)
 
     def test_dtype(self, tree_model: XGBRegressor, X: NDArray) -> None:
-        S, _ = shap_values(tree_model, X)
+        S = shap_values(tree_model, X)
         assert S.dtype == np.float32
 
-    def test_output(self, tree_model: XGBRegressor, X: NDArray) -> None:
-        S, b = shap_values(tree_model, X)
-        y = tree_model.predict(X)
-        assert np.allclose(y, b + np.sum(S, axis=1), atol=tol, rtol=tol)
 
+def test_downdate(S, y, y_sq, idx: int) -> None:
+    features = np.array(FEATURES)
+    num_unused_features = 0
+    state = initial_state(S, y, features, num_unused_features)
 
-def test_downdate(A: NDArray, b: NDArray, idx: int) -> None:
-    A_pinv = np.linalg.pinv(A)
-    full_rank = np.linalg.matrix_rank(A) == A.shape[0]
+    A = state.A
+    residual_dof = state.residual_dof
+
+    n = A.shape[0]
+    full_rank = np.linalg.matrix_rank(A) == n
     if not full_rank:
         pytest.skip("Matrix A is rank deficient")
 
-    A_down, _, _, A_pinv_down = downdate(A, b, FEATURES, A_pinv, idx)
+    state_down = downdate(state, idx)
 
-    assert A_down.shape == (N - 1, N - 1)
+    A_down = state_down.A
+    b_down = state_down.b
+    features_down = state_down.features
+    A_inv_down = state_down.A_inv
+    beta_down = state_down.beta
+    rss_down = state_down.rss
+    residual_dof_down = state_down.residual_dof
+
+    # shapes
+    assert A_down.shape == (n - 1, n - 1)
+    assert b_down.shape == (n - 1,)
+    assert features_down.shape == (n - 1,)
+    assert A_inv_down.shape == (n - 1, n - 1)
+    assert beta_down.shape == (n - 1,)
+    assert rss_down.shape == ()
+
+    # dtypes
     assert A_down.dtype == np.float32
+    assert b_down.dtype == np.float32
+    assert features_down.dtype.kind == "U"
+    assert A_inv_down.dtype == np.float32
+    assert beta_down.dtype == np.float32
+    assert rss_down.dtype == np.float32
+    assert residual_dof_down == residual_dof - 1
 
-    assert A_pinv_down.shape == (N - 1, N - 1)
-    assert A_pinv_down.dtype == np.float32
-
-    assert np.allclose(A_pinv_down, np.linalg.pinv(A_down), atol=tol, rtol=tol)
+    # formulas / properties
+    assert np.allclose(A_inv_down, np.linalg.pinv(A_down), atol=tol, rtol=tol)
+    assert np.allclose(beta_down, A_inv_down @ b_down, atol=tol, rtol=tol)
+    assert np.allclose(rss_down, y_sq - np.dot(b_down, beta_down), atol=tol, rtol=tol)
+    assert residual_dof_down == residual_dof - 1
 
 
 def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> None:
@@ -177,8 +178,8 @@ def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> Non
         df = df.rename(columns=rename_by)[list(rename_by.values())]
         return df
 
-    A_pinv = np.linalg.pinv(A)
-    df_0 = ols(A_pinv, b, FEATURES, M, 0, y_sq)
+    state = initial_state(S, y, FEATURES, 0)
+    df_0 = ols(state)
     df_1 = ols_statsmodels(S, y, FEATURES)
 
     df_1[T_VALUE] = np.where(df_1[COEFFICIENT].abs() < 1e-10, np.nan, df_1[T_VALUE])
@@ -187,7 +188,7 @@ def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> Non
     pd.testing.assert_frame_equal(df_0, df_1, check_dtype=False, rtol=tol, atol=tol)
 
 
-def test_flash_select(tree_model: XGBRegressor, X: NDArray, y: NDArray, use_all_features: bool) -> None:
+def test_flash_select(tree_model: XGBRegressor, X: NDArray, y: NDArray) -> None:
     df_flash_select = flash_select(tree_model, X, y, FEATURES)
 
     X_df = pd.DataFrame(X, columns=FEATURES)

@@ -169,10 +169,10 @@ def downdate(state: State, idx: int) -> State:
     features = features[mask]
 
     E = A_inv[mask, :][:, mask]
-    G = A_inv[mask, :][idx]
+    G = A_inv[mask, idx]
     H = A_inv[idx, idx]
     G_sub_H = G / H
-    G_sub_H_dot_b = np.dot(G_sub_H, b[mask])
+    G_sub_H_dot_b = np.dot(G_sub_H, b)
 
     A_inv = E - np.outer(G, G_sub_H)
     beta = beta[mask] - G * (b_0 + G_sub_H_dot_b)
