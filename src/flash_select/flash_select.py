@@ -1,7 +1,7 @@
 from typing import Any
 
 import numpy as np
-import polars as pl
+import pandas as pd
 import scipy
 from numpy.typing import NDArray
 from shap import Explainer
@@ -19,7 +19,7 @@ def flash_select(
     y: NDArray,
     features: list[str],
     threshold: float = 0.05,
-) -> pl.DataFrame:
+) -> pd.DataFrame:
     """Perform feature selection using the Flash Select algorithm.
 
     This function implements a feature selection method that combines SHAP values
@@ -44,7 +44,7 @@ def flash_select(
 
     Returns
     -------
-    pl.DataFrame
+    pd.DataFrame
         A DataFrame containing feature selection results with columns:
         - feature name: Name of the feature
         - t-value: T-statistic for the feature
@@ -85,7 +85,7 @@ def flash_select(
     mask = np.array([f"f{i}" in feature_scores for i in range(X.shape[1])])
     unused_features = list(map(str, np.array(features)[~mask]))
     num_unused_features = len(unused_features)
-    df_unused_features = pl.DataFrame(
+    df_unused_features = pd.DataFrame(
         {
             FEATURE_NAME: unused_features,
             T_VALUE: np.full(num_unused_features, np.nan),
@@ -103,17 +103,10 @@ def flash_select(
 
     df = significance(A, b, features, m, n, num_unused_features, y_sq)
 
-    df = pl.concat([df, df_unused_features])
-
-    df = df.with_columns(
-        pl.when(pl.col(COEFFICIENT) < 0)
-        .then(-1)
-        .when(pl.col(STAT_SIGNIFICANCE) < threshold)
-        .then(1)
-        .otherwise(0)
-        .alias(SELECTED)
-    ).sort([T_VALUE, FEATURE_NAME], descending=[True, False])
-
+    df = pd.concat([df, df_unused_features])
+    df[SELECTED] = np.where(df[COEFFICIENT] < 0, -1, np.where(df[STAT_SIGNIFICANCE] < threshold, 1, 0))
+    df = df.sort_values(by=[T_VALUE, FEATURE_NAME], ascending=[False, True])
+    df = df.reset_index(drop=True)
     return df
 
 
@@ -147,7 +140,7 @@ def significance(
     n: int,
     num_unused_features: int,
     y_sq: float,
-) -> pl.DataFrame:
+) -> pd.DataFrame:
     """Perform iterative feature selection using statistical significance
     testing.
 
@@ -173,7 +166,7 @@ def significance(
 
     Returns
     -------
-    pl.DataFrame
+    pd.DataFrame
         DataFrame containing significance results for all features with columns:
         - feature name: Name of the feature
         - t-value: T-statistic for the feature
@@ -186,13 +179,13 @@ def significance(
     for _ in range(n):
         ols_out = ols(A_pinv, b, features, m, num_unused_features, y_sq)
 
-        idx = ols_out[T_VALUE].arg_min()
-        row = ols_out.row(idx, named=True)
-        results.append(pl.DataFrame(row))
+        idx = ols_out[T_VALUE].argmin()
+        row = ols_out.iloc[idx].to_dict()
+        results.append(pd.DataFrame([row]))
 
         A, b, features, A_pinv = downdate(A, b, features, A_pinv, idx)
 
-    return pl.concat(results)
+    return pd.concat(results)
 
 
 def ols(
@@ -202,7 +195,7 @@ def ols(
     m: int,
     num_unused_features: int,
     y_sq: float,
-) -> pl.DataFrame:
+) -> pd.DataFrame:
     """Perform Ordinary Least Squares (OLS) regression and compute significance
     statistics.
 
@@ -223,7 +216,7 @@ def ols(
 
     Returns
     -------
-    pl.DataFrame
+    pd.DataFrame
         DataFrame containing OLS results with columns:
         - feature name: Name of the feature
         - t-value: T-statistic for the feature
@@ -239,7 +232,7 @@ def ols(
     t_stats = beta / np.sqrt(sigma_sq * inv_diag)  # (n,)
     p_values = 2 * (1 - scipy.stats.t.cdf(np.abs(t_stats), residual_dof))  # (n,)
 
-    df = pl.DataFrame(
+    df = pd.DataFrame(
         {
             FEATURE_NAME: features,
             T_VALUE: t_stats,
