@@ -5,7 +5,6 @@ from typing import Any
 import colorlog
 import numpy as np
 import pandas as pd
-import polars as pl
 from numpy.typing import NDArray
 from shap_select import shap_select
 from xgboost import XGBRegressor
@@ -75,11 +74,11 @@ def shap_select_regression(
     features: list[str],
     threshold: float = 0.05,
     alpha: float = 1e-6,
-) -> pl.DataFrame:
+) -> pd.DataFrame:
     X_df = pd.DataFrame(X, columns=features)
     y_df = pd.Series(y, name="target")
     df = shap_select(tree_model, X_df, y_df, task="regression", threshold=threshold, alpha=alpha)
-    df = pl.from_pandas(df, nan_to_null=False).sort([T_VALUE, FEATURE_NAME], descending=[True, False])
+    df = df.sort_values([T_VALUE, FEATURE_NAME], ascending=[False, False])
     return df
 
 
@@ -111,7 +110,7 @@ def benchmark(m: int, n: int, alpha: float) -> None:
     equal_selected = df_flash[SELECTED].equals(df_shap[SELECTED])
     log.info(f"Same set of selected features? {'yes' if equal_selected else 'no'}")
 
-    df = pl.DataFrame(
+    df = pd.DataFrame(
         {
             "m": m,
             "n": n,
@@ -137,7 +136,7 @@ def main() -> None:
         df = benchmark(m, n, alpha=1e-6)
         dfs.append(df)
 
-    df = pl.concat(dfs)
+    df = pd.concat(dfs)
     log.info(df)
 
 
