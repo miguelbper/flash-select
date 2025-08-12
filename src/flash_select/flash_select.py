@@ -1,3 +1,4 @@
+import warnings
 from typing import Any
 
 import numpy as np
@@ -100,6 +101,12 @@ def flash_select(
     b = S.T @ y
     m, n = S.shape
     y_sq = np.square(np.linalg.norm(y))
+
+    if np.linalg.matrix_rank(A) < n:
+        warnings.warn(
+            "Matrix A is not full rank! May not get correct results. Recommended: try again with a deeper tree model.",
+            stacklevel=1,
+        )
 
     df = significance(A, b, features, m, n, num_unused_features, y_sq)
 
