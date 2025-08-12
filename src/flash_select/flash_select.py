@@ -1,4 +1,5 @@
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,7 +31,7 @@ def flash_select(
     tree_model: Any,
     X: NDArray,
     y: NDArray,
-    features: list[str],
+    features: Iterable[str],
     threshold: float = 0.05,
 ) -> pd.DataFrame:
     X = X.astype(np.float32)
@@ -64,7 +65,7 @@ def remove_unused_features(
 ) -> tuple[pd.DataFrame, NDArray[np.float32], NDArray[np.str_]]:
     feature_scores = tree_model.get_booster().get_score()
     mask = np.array([f"f{i}" in feature_scores for i in range(S.shape[1])])
-    unused_features = list(map(str, np.array(features)[~mask]))
+    unused_features = np.array(features)[~mask]
     num_unused_features = len(unused_features)
     df_unused_features = pd.DataFrame(
         {
