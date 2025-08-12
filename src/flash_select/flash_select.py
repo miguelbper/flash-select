@@ -178,6 +178,6 @@ def downdate(state: State, idx: int) -> State:
     beta = beta[mask] - G * (b_0 + G_sub_H_dot_b)
     rss += b_0 * beta_0 + H * G_sub_H_dot_b * (b_0 + G_sub_H_dot_b)
 
-    residual_dof -= 1
+    residual_dof += 1
 
     return State(A, b, features, A_inv, beta, rss, residual_dof)

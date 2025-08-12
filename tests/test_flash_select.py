@@ -152,13 +152,12 @@ def test_downdate(S, y, y_sq, idx: int) -> None:
     assert A_inv_down.dtype == np.float32
     assert beta_down.dtype == np.float32
     assert rss_down.dtype == np.float32
-    assert residual_dof_down == residual_dof - 1
 
     # formulas / properties
     assert np.allclose(A_inv_down, np.linalg.pinv(A_down), atol=tol, rtol=tol)
     assert np.allclose(beta_down, A_inv_down @ b_down, atol=tol, rtol=tol)
     assert np.allclose(rss_down, y_sq - np.dot(b_down, beta_down), atol=tol, rtol=tol)
-    assert residual_dof_down == residual_dof - 1
+    assert residual_dof_down == residual_dof + 1
 
 
 def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> None:
