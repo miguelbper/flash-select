@@ -18,6 +18,28 @@ SELECTED = "selected"
 
 @dataclass
 class State:
+    """Represents the current state of the feature selection algorithm.
+
+    Attributes
+    ----------
+    A : NDArray[np.float32]
+        Design matrix of shape (n, n) where n is the number of active features.
+        A = S^T @ S where S is the SHAP values matrix.
+    b : NDArray[np.float32]
+        Response vector of shape (n,) where n is the number of active features.
+        b = S^T @ y where y is the target variable.
+    features : NDArray[np.str_]
+        Array of feature names of shape (n,) for the currently active features.
+    A_inv : NDArray[np.float32]
+        Inverse of the design matrix A of shape (n, n).
+    beta : NDArray[np.float32]
+        Coefficient vector of shape (n,) from the current OLS regression.
+    rss : NDArray[np.float32]
+        Residual sum of squares of shape (1,).
+    residual_dof : int
+        Residual degrees of freedom for statistical testing.
+    """
+
     A: NDArray[np.float32]  # (n, n)
     b: NDArray[np.float32]  # (n,)
     features: NDArray[np.str_]  # (n,)
@@ -34,6 +56,46 @@ def flash_select(
     features: Iterable[str],
     threshold: float = 0.05,
 ) -> pd.DataFrame:
+    """Main function to perform feature selection using SHAP values and
+    statistical significance.
+
+    This function implements the Flash Select algorithm which:
+    1. Computes SHAP values for the given tree model
+    2. Removes unused features (those not used by the model)
+    3. Iteratively removes the least significant feature based on t-statistics
+    4. Returns a DataFrame with feature rankings and selection status
+
+    Parameters
+    ----------
+    tree_model : Any
+        A tree-based model (e.g., XGBoost, LightGBM) that supports SHAP explanation.
+    X : NDArray
+        Feature matrix of shape (n_samples, n_features).
+    y : NDArray
+        Target variable of shape (n_samples,).
+    features : Iterable[str]
+        List of feature names corresponding to the columns in X.
+    threshold : float, default=0.05
+        Significance threshold for feature selection. Features with p-value < threshold
+        are considered significant.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing feature information with columns:
+        - feature name: Name of the feature
+        - t-value: t-statistic for the feature coefficient
+        - stat.significance: p-value for the feature coefficient
+        - coefficient: Estimated coefficient value
+        - selected: Selection status (-1 for negative, 1 for significant, 0 for not significant)
+
+        Features are sorted by t-value (descending) and then by feature name (ascending).
+
+    Warns
+    -----
+    UserWarning
+        If the design matrix A is not full rank, indicating potential numerical issues.
+    """
     X = X.astype(np.float32)
     y = y.astype(np.float32)
     features = np.array(features, dtype=np.str_)
@@ -63,6 +125,29 @@ def flash_select(
 def remove_unused_features(
     tree_model: Any, S: NDArray[np.float32], features: NDArray[np.str_]
 ) -> tuple[pd.DataFrame, NDArray[np.float32], NDArray[np.str_]]:
+    """Remove features that are not used by the tree model.
+
+    This function identifies features that have zero importance scores in the tree model
+    and removes them from the SHAP values matrix and features list. It creates a DataFrame
+    for these unused features with appropriate default values.
+
+    Parameters
+    ----------
+    tree_model : Any
+        A tree-based model with a get_booster().get_score() method.
+    S : NDArray[np.float32]
+        SHAP values matrix of shape (n_samples, n_features).
+    features : NDArray[np.str_]
+        Array of feature names of shape (n_features,).
+
+    Returns
+    -------
+    tuple[pd.DataFrame, NDArray[np.float32], NDArray[np.str_]]
+        A tuple containing:
+        - df_unused_features: DataFrame with unused feature information
+        - S: Updated SHAP values matrix with unused features removed
+        - features: Updated feature names array with unused features removed
+    """
     feature_scores = tree_model.get_booster().get_score()
     mask = np.array([f"f{i}" in feature_scores for i in range(S.shape[1])])
     unused_features = np.array(features)[~mask]
@@ -86,6 +171,32 @@ def initial_state(
     features: NDArray[np.str_],
     num_unused_features: int,
 ) -> State:
+    """Initialize the state for the feature selection algorithm.
+
+    This function computes the initial values for the State object by:
+    1. Computing the design matrix A = S^T @ S
+    2. Computing the response vector b = S^T @ y
+    3. Computing the inverse of A using pseudo-inverse
+    4. Computing initial coefficients beta = A_inv @ b
+    5. Computing residual sum of squares (RSS)
+    6. Computing residual degrees of freedom
+
+    Parameters
+    ----------
+    S : NDArray[np.float32]
+        SHAP values matrix of shape (n_samples, n_features).
+    y : NDArray[np.float32]
+        Target variable of shape (n_samples,).
+    features : NDArray[np.str_]
+        Array of feature names of shape (n_features,).
+    num_unused_features : int
+        Number of features that were removed as unused.
+
+    Returns
+    -------
+    State
+        Initial state object with all computed values.
+    """
     A = S.T @ S
     b = S.T @ y
     A_inv = np.linalg.pinv(A)
@@ -99,6 +210,10 @@ def initial_state(
 def shap_values(tree_model: Any, X: NDArray[np.float32]) -> NDArray[np.float32]:
     """Compute SHAP values for a tree-based model.
 
+    This function uses the SHAP library to compute feature importance values
+    for each sample-feature combination. SHAP values provide a unified measure
+    of feature importance that can be used for feature selection.
+
     Parameters
     ----------
     tree_model : Any
@@ -108,10 +223,9 @@ def shap_values(tree_model: Any, X: NDArray[np.float32]) -> NDArray[np.float32]:
 
     Returns
     -------
-    tuple[NDArray, NDArray]
-        A tuple containing:
-        - SHAP values of shape (n_samples, n_features)
-        - Base values of shape (n_samples,)
+    NDArray[np.float32]
+        SHAP values matrix of shape (n_samples, n_features) where each element
+        represents the contribution of a feature to the prediction for a sample.
     """
     explainer = Explainer(tree_model)
     shap_values = explainer(X)
@@ -119,6 +233,27 @@ def shap_values(tree_model: Any, X: NDArray[np.float32]) -> NDArray[np.float32]:
 
 
 def significance(state: State) -> pd.DataFrame:
+    """Perform iterative feature selection based on statistical significance.
+
+    This function implements the core feature selection algorithm by:
+    1. Computing OLS statistics for the current state
+    2. Identifying the least significant feature (lowest t-value)
+    3. Downdating the state by removing that feature
+    4. Repeating until all features are processed
+
+    Parameters
+    ----------
+    state : State
+        Current state object containing the design matrix, coefficients, and other
+        relevant information.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing the results for all features that were processed,
+        sorted by the order they were removed (least significant first).
+        Each row contains feature name, t-value, significance, and coefficient.
+    """
     n = len(state.features)
     results = []
 
@@ -135,6 +270,27 @@ def significance(state: State) -> pd.DataFrame:
 
 
 def ols(state: State) -> pd.DataFrame:
+    """Compute Ordinary Least Squares (OLS) statistics for the current state.
+
+    This function computes t-statistics, p-values, and other statistical measures
+    for the current feature set. It uses the current state's inverse matrix and
+    residual sum of squares to compute these statistics efficiently.
+
+    Parameters
+    ----------
+    state : State
+        Current state object containing the design matrix, inverse matrix,
+        coefficients, and residual information.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing statistical information for each feature:
+        - feature name: Name of the feature
+        - t-value: t-statistic for testing H0: beta = 0
+        - stat.significance: Two-sided p-value for the t-test
+        - coefficient: Estimated coefficient value (beta)
+    """
     sigma_sq = state.rss / state.residual_dof
     inv_diag = np.diag(state.A_inv)
     t_stats = state.beta / np.sqrt(sigma_sq * inv_diag)
@@ -153,6 +309,25 @@ def ols(state: State) -> pd.DataFrame:
 
 
 def downdate(state: State, idx: int) -> State:
+    """Efficiently update the state after removing a feature.
+
+    This function implements the Sherman-Morrison-Woodbury formula to efficiently
+    update the inverse matrix and other state variables when a feature is removed.
+    This avoids the need to recompute the full inverse matrix, making the
+    algorithm computationally efficient.
+
+    Parameters
+    ----------
+    state : State
+        Current state object before feature removal.
+    idx : int
+        Index of the feature to remove.
+
+    Returns
+    -------
+    State
+        Updated state object with the specified feature removed.
+    """
     A = state.A
     b = state.b
     features = state.features
