@@ -1,9 +1,7 @@
 import numpy as np
 import pandas as pd
-import polars as pl
 import pytest
 from numpy.typing import NDArray
-from polars.testing import assert_frame_equal
 from shap import Explainer
 from shap_select import shap_select
 from statsmodels.regression.linear_model import OLS
@@ -138,38 +136,30 @@ def test_downdate(A: NDArray, b: NDArray, idx: int) -> None:
 
 
 def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> None:
-    def ols_statsmodels(S: NDArray, y: NDArray, features: list[str]) -> pl.DataFrame:
+    def ols_statsmodels(S: NDArray, y: NDArray, features: list[str]) -> pd.DataFrame:
         df_S = pd.DataFrame(S, columns=features)
         df_y = pd.Series(y, name="target")
         model = OLS(df_y, df_S)
         result = model.fit_regularized(alpha=0.0, refit=True)
         table = result.summary2().tables[1]
-        df = pl.from_pandas(table, nan_to_null=False, include_index=True)
+        df = table.reset_index()
         rename_by = {
-            "None": FEATURE_NAME,
+            "index": FEATURE_NAME,
             "t": T_VALUE,
             "P>|t|": STAT_SIGNIFICANCE,
             "Coef.": COEFFICIENT,
         }
-        df = df.rename(rename_by).select(rename_by.values())
+        df = df.rename(columns=rename_by)[list(rename_by.values())]
         return df
 
     A_pinv = np.linalg.pinv(A)
     df_0 = ols(A_pinv, b, FEATURES, M, 0, y_sq)
     df_1 = ols_statsmodels(S, y, FEATURES)
 
-    df_1 = df_1.with_columns(
-        pl.when(pl.col(COEFFICIENT).abs() < 1e-10)
-        .then(float("nan"))
-        .otherwise(pl.col(T_VALUE))
-        .alias(T_VALUE),
-        pl.when(pl.col(COEFFICIENT).abs() < 1e-10)
-        .then(float("nan"))
-        .otherwise(pl.col(STAT_SIGNIFICANCE))
-        .alias(STAT_SIGNIFICANCE)
-    )  # fmt: skip
+    df_1[T_VALUE] = np.where(df_1[COEFFICIENT].abs() < 1e-10, np.nan, df_1[T_VALUE])
+    df_1[STAT_SIGNIFICANCE] = np.where(df_1[COEFFICIENT].abs() < 1e-10, np.nan, df_1[STAT_SIGNIFICANCE])
 
-    assert_frame_equal(df_0, df_1, check_dtypes=False, rtol=tol, atol=tol)
+    pd.testing.assert_frame_equal(df_0, df_1, check_dtype=False, rtol=tol, atol=tol)
 
 
 def test_flash_select(tree_model: XGBRegressor, X: NDArray, y: NDArray, use_all_features: bool) -> None:
@@ -178,8 +168,6 @@ def test_flash_select(tree_model: XGBRegressor, X: NDArray, y: NDArray, use_all_
     X_df = pd.DataFrame(X, columns=FEATURES)
     y_df = pd.Series(y, name="target")
     df_shap_select = shap_select(tree_model, X_df, y_df, task="regression", alpha=0.0)
-    df_shap_select = pl.from_pandas(df_shap_select, nan_to_null=False).sort(
-        [T_VALUE, FEATURE_NAME], descending=[True, False]
-    )
+    df_shap_select = df_shap_select.sort_values(by=[T_VALUE, FEATURE_NAME], ascending=[False, True])
 
-    assert_frame_equal(df_flash_select, df_shap_select, check_dtypes=False, rtol=tol, atol=tol)
+    pd.testing.assert_frame_equal(df_flash_select, df_shap_select, check_dtype=False, rtol=tol, atol=tol)
