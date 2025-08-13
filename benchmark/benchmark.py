@@ -112,14 +112,14 @@ def benchmark(m: int, n: int, alpha: float) -> None:
 
     df = pd.DataFrame(
         {
-            "m": m,
-            "n": n,
-            "time flash": t_flash,
-            "time shap": t_shap,
-            "speedup": speedup,
-            "n_xgboost": n_xgboost,
-            "n_flash": n_flash,
-            "equal_selected": equal_selected,
+            "m": [m],
+            "n": [n],
+            "time flash": [t_flash],
+            "time shap": [t_shap],
+            "speedup": [speedup],
+            "n_xgboost": [n_xgboost],
+            "n_flash": [n_flash],
+            "equal_selected": [equal_selected],
         }
     )
 
@@ -129,7 +129,7 @@ def benchmark(m: int, n: int, alpha: float) -> None:
 def main() -> None:
     dfs = []
 
-    for i in range(5, 10):
+    for i in range(5, 9):
         n = 2**i
         m = 100 * n
         log.info(f"Running benchmark for n = {n} features and m = {m} samples")

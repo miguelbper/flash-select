@@ -22,7 +22,7 @@ flash-select is an extremely fast implementation of [shap-select](https://github
 
 Given that flash-select has lower algorithmic complexity than shap-select, for larger datasets the speedup will be even greater.
 
-These speedups enable feature selection for datasets with thousands of features. The package is tiny, thoroughly tested, and has few dependencies.
+These speedups enable feature selection for datasets with thousands of features. The package is tiny, thoroughly tested, and has few dependencies (these are numpy, pandas, scipy, and shap).
 
 flash-select works for regression problems on tabular datasets.
 
@@ -78,7 +78,7 @@ $$
     \end{align}
 $$
 
-We can save on computation by doing linear regression explicitly (instead of calling an external library) and updating (instead of recomputing from scratch) the matrix $A^{-1}$.
+We can save on computation by doing linear regression explicitly (instead of calling an external library) and updating (instead of recomputing from scratch) the matrix $A^{-1}$. The same logic is used for other arrays as well.
 
 Note that shap-select uses a small L1 regularization of $\alpha = 10^{-6}$.
 - It is possible to show mathematically that flash-select gives exactly the same results as shap-select with $\alpha = 0$ (this is also verified in the unit tests)
