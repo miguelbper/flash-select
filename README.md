@@ -67,6 +67,21 @@ uv sync
 uv run benchmark/benchmark.py
 ```
 
+**Benchmark results:**
+| Samples (m) | Features (n) | flash-select (s) | shap-select (s) | Speedup | Selected Features | Selected same set of features?|
+|-------------|--------------|------------------|-----------------|---------|-------------------|-------------------------------|
+| 3200        | 32           | 0.19             | 0.87            | 4.6x    | 15/32             | Yes                           |
+| 6400        | 64           | 0.65             | 7.05            | 10.9x   | 32/64             | Yes                           |
+| 12800       | 128          | 2.06             | 127.86          | 62.0x   | 65/128            | Yes                           |
+| 25600       | 256          | 7.78             | 2476.31         | 318.3x  | 129/256           | Yes                           |
+
+**System Specifications:**
+- **OS**: Ubuntu 24.04.2 LTS on Windows 10 x86_64 (WSL2)
+- **Kernel**: Linux 6.6.87.2-microsoft-standard-WSL2
+- **CPU**: AMD Ryzen 9 5900X (24 threads) @ 3.699GHz
+- **Memory**: 96.6 GB RAM
+- **Environment**: WSL2 (Windows Subsystem for Linux)
+
 ## How is it so fast?
 The original implementation of shap-select iteratively performs a linear regression on the dataset (Shapley values, target), where at each iteration we delete one column of the Shapley values matrix. With no regularization, the linear regression coefficients $\beta$ are given by:
 
