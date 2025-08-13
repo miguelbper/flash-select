@@ -137,7 +137,7 @@ def main() -> None:
         dfs.append(df)
 
     df = pd.concat(dfs)
-    log.info(df)
+    log.info("Results:\n" + df.to_string())
 
 
 if __name__ == "__main__":
