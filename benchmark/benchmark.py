@@ -1,8 +1,8 @@
-import logging
 from time import time
 from typing import Any
 
-import colorlog
+import click
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
@@ -11,33 +11,6 @@ from xgboost import XGBRegressor
 
 from flash_select.flash_select import FEATURE_NAME, SELECTED, T_VALUE, flash_select
 
-
-def get_logger() -> logging.Logger:
-    formatter = colorlog.ColoredFormatter(
-        "[%(cyan)s%(asctime)s%(reset)s][%(blue)s%(name)s%(reset)s][%(log_color)s%(levelname)s%(reset)s] - %(message)s",
-        log_colors={
-            "DEBUG": "purple",
-            "INFO": "green",
-            "WARNING": "yellow",
-            "ERROR": "red",
-            "CRITICAL": "red",
-        },
-        reset=True,
-        secondary_log_colors={},
-        style="%",
-    )
-
-    handler = colorlog.StreamHandler()
-    handler.setFormatter(formatter)
-
-    logging.getLogger().setLevel(logging.INFO)
-    logging.getLogger().handlers.clear()
-    logging.getLogger().addHandler(handler)
-
-    return logging.getLogger(__name__)
-
-
-log = get_logger()
 rng = np.random.default_rng(42)
 
 
@@ -49,21 +22,12 @@ def get_y(X: NDArray) -> NDArray:
     return y
 
 
-def get_model(m: int, n: int) -> XGBRegressor:
+def get_model(m: int, n: int, n_estimators: int = 100) -> XGBRegressor:
     X_train = rng.normal(size=(m, n))
     y_train = get_y(X_train)
 
-    model = XGBRegressor(
-        n_estimators=10 * n,
-        learning_rate=0.1,
-        max_depth=4,
-        max_leaves=2**4,
-        colsample_bytree=0.1,
-        colsample_bylevel=0.1,
-        colsample_bynode=0.1,
-    )
+    model = XGBRegressor(n_estimators=n_estimators)
     model.fit(X_train, y_train)
-
     return model
 
 
@@ -82,62 +46,108 @@ def shap_select_regression(
     return df
 
 
-def benchmark(m: int, n: int, alpha: float) -> None:
-    log.info(f"Fitting xgboost model with {n} features and {m} samples")
-    tree_model = get_model(m, n)
+def benchmark(
+    m_train: int,
+    m_val: int,
+    n: int,
+    n_estimators: int = 100,
+    alpha: float = 1e-6,
+    plot_results: bool = False,
+) -> None:
+    print(f"Fitting xgboost model with {m_train} samples, {n} features, and {n_estimators} trees")
+    tree_model = get_model(m_train, n, n_estimators=n_estimators)
 
-    X = rng.normal(size=(m, n))
+    feature_scores = tree_model.get_booster().get_score()
+    num_unused_features = n - len(feature_scores)
+    print(f"* Number of unused features: {num_unused_features}")
+
+    print(f"Creating validation set with {m_val} samples and {n} features")
+    X = rng.normal(size=(m_val, n))
     y = get_y(X)
     features = [f"feature_{i}" for i in range(n)]
 
-    log.info("Running flash_select...")
+    print("Running flash_select...")
     t0 = time()
     df_flash = flash_select(tree_model, X, y, features)
     t_flash = time() - t0
-    log.info(f"flash_select took {t_flash} seconds")
+    print(f"* flash_select took {t_flash} seconds")
 
-    log.info("Running shap_select...")
+    print("Running shap_select...")
     t0 = time()
     df_shap = shap_select_regression(tree_model, X, y, features, alpha=alpha)
     t_shap = time() - t0
-    log.info(f"shap_select took {t_shap} seconds")
+    print(f"* shap_select took {t_shap} seconds")
 
     speedup = t_shap / t_flash
-    log.info(f"Speedup: {speedup}")
+    print(f"* Speedup: {speedup}")
 
-    n_xgboost = len(tree_model.get_booster().get_score().keys())
-    n_flash = (df_flash[SELECTED] == 1).sum()
     equal_selected = df_flash[SELECTED].equals(df_shap[SELECTED])
-    log.info(f"Same set of selected features? {'yes' if equal_selected else 'no'}")
+    print(f"* Same set of selected features? {'yes' if equal_selected else 'no'}")
 
-    df = pd.DataFrame(
-        {
-            "m": m,
-            "n": n,
-            "time flash": t_flash,
-            "time shap": t_shap,
-            "speedup": speedup,
-            "n_xgboost": n_xgboost,
-            "n_flash": n_flash,
-            "equal_selected": equal_selected,
-        }
+    print(df_flash)
+    print(df_shap)
+
+    if plot_results:
+        plot(m_val, n, t_flash, t_shap)
+
+
+def plot(m_val: int, n: int, time_flash: float, time_shap: float) -> None:
+    _, ax = plt.subplots(figsize=(10, 3))
+
+    methods = ["shap-select", "flash-select"]
+    times = [time_shap, time_flash]
+
+    bars = ax.barh(methods, times, color="#a155e7", height=0.5)
+
+    for b, t in zip(bars, times, strict=True):
+        ax.text(
+            t + max(times) * 0.01,
+            b.get_y() + b.get_height() / 2,
+            f"{t:.2f}s",
+            va="center",
+            ha="left",
+            fontweight="bold",
+        )
+
+    ax.set_title(
+        f"Time to run on a dataset with {m_val} examples and {n} features", fontweight="bold", fontsize=14, pad=20
     )
 
-    return df
+    ax.set_xlabel("Time (seconds)")
+    ax.set_xlim(0, max(times) * 1.1)
+
+    ax.grid(True, axis="x", alpha=0.3, linestyle="--")
+
+    ax.set_yticks(range(len(methods)))
+    ax.set_yticklabels(methods)
+
+    ax.set_ylabel("")
+
+    plt.tight_layout()
+
+    filename = f"logs/benchmark_{m_val}_{n}.png"
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    print(f"Plot saved as: {filename}")
+
+    plt.close()
 
 
-def main() -> None:
-    dfs = []
+@click.command()
+@click.option("--m_train", default=1000, help="Number of training samples")
+@click.option("--m_val", default=1000, help="Number of validation samples")
+@click.option("--n", default=10, help="Number of features")
+@click.option("--n_estimators", default=100, help="Number of estimators for xgboost")
+@click.option("--alpha", default=1e-6, help="Alpha parameter for shap_select")
+@click.option("--plot_results", is_flag=True, help="Plot the results")
+def main(m_train: int, m_val: int, n: int, n_estimators: int, alpha: float, plot_results: bool) -> None:
+    print("Running benchmark with parameters:")
+    print(f"* m_train: {m_train}")
+    print(f"* m_val: {m_val}")
+    print(f"* n: {n}")
+    print(f"* n_estimators: {n_estimators}")
+    print(f"* alpha: {alpha:.2e}")
 
-    for i in range(5, 10):
-        n = 2**i
-        m = 100 * n
-        log.info(f"Running benchmark for n = {n} features and m = {m} samples")
-        df = benchmark(m, n, alpha=1e-6)
-        dfs.append(df)
-
-    df = pd.concat(dfs)
-    log.info(df)
+    benchmark(m_train, m_val, n, n_estimators, alpha, plot_results)
 
 
 if __name__ == "__main__":

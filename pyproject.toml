@@ -18,16 +18,16 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "click>=8.0.0",
+    "matplotlib>=3.10.0",
     "pre-commit>=4.2.0",
-    "pyarrow>=21.0.0",
-    "pyright>=1.1.403",
-    "pytest>=8.4.1",
-    "pytest-cov>=6.2.1",
-    "ruff>=0.12.7",
-    "statsmodels>=0.14.5",
-    "xgboost>=3.0.3",
+    "pyright>=1.1.0",
+    "pytest>=8.4.0",
+    "pytest-cov>=6.2.0",
+    "ruff>=0.12.0",
     "shap-select",
-    "colorlog>=6.9.0",
+    "statsmodels>=0.14.0",
+    "xgboost>=3.0.0",
 ]
 
 [tool.uv.sources]
