@@ -1,6 +1,7 @@
 from time import time
 from typing import Any
 
+import click
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
@@ -10,6 +11,11 @@ from xgboost import XGBRegressor
 from flash_select.flash_select import FEATURE_NAME, SELECTED, T_VALUE, flash_select
 
 rng = np.random.default_rng(42)
+# TODO: see if this should be kept
+M_KAGGLE = 284807
+M_KAGGLE_TRAIN = int(0.6 * M_KAGGLE)
+M_KAGGLE_VAL = int(0.2 * M_KAGGLE)
+N_KAGGLE = 30
 
 
 def get_y(X: NDArray) -> NDArray:
@@ -25,14 +31,12 @@ def get_model(m: int, n: int) -> XGBRegressor:
     y_train = get_y(X_train)
 
     model = XGBRegressor(
-        n_estimators=10 * n,
-        learning_rate=0.1,
-        max_depth=4,
-        max_leaves=2**4,
-        colsample_bytree=0.1,
-        colsample_bylevel=0.1,
-        colsample_bynode=0.1,
+        n_estimators=100,
+        verbosity=0,
+        seed=42,
+        nthread=1,
     )
+
     model.fit(X_train, y_train)
 
     return model
@@ -53,11 +57,12 @@ def shap_select_regression(
     return df
 
 
-def benchmark(m: int, n: int, alpha: float) -> None:
-    print(f"Fitting xgboost model with {n} features and {m} samples")
-    tree_model = get_model(m, n)
+def benchmark(m_train: int, m_val: int, n: int, alpha: float = 1e-6) -> pd.Series:
+    print(f"Fitting xgboost model with {m_train} samples and {n} features")
+    tree_model = get_model(m_train, n)
 
-    X = rng.normal(size=(m, n))
+    print(f"Creating validation set with {m_val} samples and {n} features")
+    X = rng.normal(size=(m_val, n))
     y = get_y(X)
     features = [f"feature_{i}" for i in range(n)]
 
@@ -76,39 +81,37 @@ def benchmark(m: int, n: int, alpha: float) -> None:
     speedup = t_shap / t_flash
     print(f"Speedup: {speedup}")
 
-    n_xgboost = len(tree_model.get_booster().get_score().keys())
-    n_flash = (df_flash[SELECTED] == 1).sum()
     equal_selected = df_flash[SELECTED].equals(df_shap[SELECTED])
     print(f"Same set of selected features? {'yes' if equal_selected else 'no'}")
 
-    df = pd.DataFrame(
+    df = pd.Series(
         {
-            "m": [m],
-            "n": [n],
-            "time flash": [t_flash],
-            "time shap": [t_shap],
-            "speedup": [speedup],
-            "n_xgboost": [n_xgboost],
-            "n_flash": [n_flash],
-            "equal_selected": [equal_selected],
+            "m_val": m_val,
+            "n": n,
+            "time flash": t_flash,
+            "time shap": t_shap,
+            "speedup": speedup,
+            "equal_selected": equal_selected,
         }
     )
 
     return df
 
 
-def main() -> None:
-    dfs = []
+@click.command()
+@click.option("--m_train", default=M_KAGGLE_TRAIN, help="Number of training samples")
+@click.option("--m_val", default=M_KAGGLE_VAL, help="Number of validation samples")
+@click.option("--n", default=N_KAGGLE, help="Number of features")
+@click.option("--alpha", default=1e-6, help="Alpha parameter for shap_select")
+def main(m_train: int, m_val: int, n: int, alpha: float) -> None:
+    print("Running benchmark with parameters:")
+    print(f"* m_train: {m_train}")
+    print(f"* m_val: {m_val}")
+    print(f"* n: {n}")
+    print(f"* alpha: {alpha:.2e}")
 
-    for i in range(5, 9):
-        n = 2**i
-        m = 100 * n
-        print(f"Running benchmark for n = {n} features and m = {m} samples")
-        df = benchmark(m, n, alpha=1e-6)
-        dfs.append(df)
-
-    df = pd.concat(dfs)
-    print("Results:\n" + df.to_string())
+    result = benchmark(m_train, m_val, n, alpha)
+    print(result)
 
 
 if __name__ == "__main__":

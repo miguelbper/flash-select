@@ -18,6 +18,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "click>=8.0.0",
     "pre-commit>=4.2.0",
     "pyarrow>=21.0.0",
     "pyright>=1.1.403",
