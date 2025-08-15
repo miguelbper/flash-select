@@ -2,6 +2,7 @@ from time import time
 from typing import Any
 
 import click
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
@@ -11,11 +12,6 @@ from xgboost import XGBRegressor
 from flash_select.flash_select import FEATURE_NAME, SELECTED, T_VALUE, flash_select
 
 rng = np.random.default_rng(42)
-# TODO: see if this should be kept
-M_KAGGLE = 284807
-M_KAGGLE_TRAIN = int(0.6 * M_KAGGLE)
-M_KAGGLE_VAL = int(0.2 * M_KAGGLE)
-N_KAGGLE = 30
 
 
 def get_y(X: NDArray) -> NDArray:
@@ -57,7 +53,7 @@ def shap_select_regression(
     return df
 
 
-def benchmark(m_train: int, m_val: int, n: int, alpha: float = 1e-6) -> pd.Series:
+def benchmark(m_train: int, m_val: int, n: int, alpha: float = 1e-6, plot_results: bool = False) -> None:
     print(f"Fitting xgboost model with {m_train} samples and {n} features")
     tree_model = get_model(m_train, n)
 
@@ -84,34 +80,65 @@ def benchmark(m_train: int, m_val: int, n: int, alpha: float = 1e-6) -> pd.Serie
     equal_selected = df_flash[SELECTED].equals(df_shap[SELECTED])
     print(f"Same set of selected features? {'yes' if equal_selected else 'no'}")
 
-    df = pd.Series(
-        {
-            "m_val": m_val,
-            "n": n,
-            "time flash": t_flash,
-            "time shap": t_shap,
-            "speedup": speedup,
-            "equal_selected": equal_selected,
-        }
+    if plot_results:
+        plot(m_val, n, t_flash, t_shap)
+
+
+def plot(m_val: int, n: int, time_flash: float, time_shap: float) -> None:
+    _, ax = plt.subplots(figsize=(10, 3))
+
+    methods = ["shap-select", "flash-select"]
+    times = [time_shap, time_flash]
+
+    bars = ax.barh(methods, times, color="#a155e7", height=0.5)
+
+    for b, t in zip(bars, times, strict=True):
+        ax.text(
+            t + max(times) * 0.01,
+            b.get_y() + b.get_height() / 2,
+            f"{t:.2f}s",
+            va="center",
+            ha="left",
+            fontweight="bold",
+        )
+
+    ax.set_title(
+        f"Time to run on a dataset with {m_val} examples and {n} features", fontweight="bold", fontsize=14, pad=20
     )
 
-    return df
+    ax.set_xlabel("Time (seconds)")
+    ax.set_xlim(0, max(times) * 1.1)
+
+    ax.grid(True, axis="x", alpha=0.3, linestyle="--")
+
+    ax.set_yticks(range(len(methods)))
+    ax.set_yticklabels(methods)
+
+    ax.set_ylabel("")
+
+    plt.tight_layout()
+
+    filename = f"benchmark_{m_val}_{n}.png"
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    print(f"Plot saved as: {filename}")
+
+    plt.close()
 
 
 @click.command()
-@click.option("--m_train", default=M_KAGGLE_TRAIN, help="Number of training samples")
-@click.option("--m_val", default=M_KAGGLE_VAL, help="Number of validation samples")
-@click.option("--n", default=N_KAGGLE, help="Number of features")
+@click.option("--m_train", default=1000, help="Number of training samples")
+@click.option("--m_val", default=1000, help="Number of validation samples")
+@click.option("--n", default=10, help="Number of features")
 @click.option("--alpha", default=1e-6, help="Alpha parameter for shap_select")
-def main(m_train: int, m_val: int, n: int, alpha: float) -> None:
+@click.option("--plot_results", is_flag=True, help="Plot the results")
+def main(m_train: int, m_val: int, n: int, alpha: float, plot_results: bool) -> None:
     print("Running benchmark with parameters:")
     print(f"* m_train: {m_train}")
     print(f"* m_val: {m_val}")
     print(f"* n: {n}")
-    print(f"* alpha: {alpha:.2e}")
+    print(f"* alpha: {alpha:.2e}\n")
 
-    result = benchmark(m_train, m_val, n, alpha)
-    print(result)
+    benchmark(m_train, m_val, n, alpha, plot_results)
 
 
 if __name__ == "__main__":
