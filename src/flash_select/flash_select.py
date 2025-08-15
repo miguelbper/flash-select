@@ -34,10 +34,14 @@ class State:
         Inverse of the design matrix A of shape (n, n).
     beta : NDArray[np.float32]
         Coefficient vector of shape (n,) from the current OLS regression.
+    ysq : NDArray[np.float32]
+        Squared norm of the target variable of shape (1,).
     rss : NDArray[np.float32]
         Residual sum of squares of shape (1,).
     residual_dof : int
         Residual degrees of freedom for statistical testing.
+    safe_invert: bool
+        Whether the inverse of the design matrix A is safe to compute.
     """
 
     A: NDArray[np.float32]  # (n, n)
@@ -45,8 +49,10 @@ class State:
     features: NDArray[np.str_]  # (n,)
     A_inv: NDArray[np.float32]  # (n, n)
     beta: NDArray[np.float32]  # (n,)
+    ysq: NDArray[np.float32]  # (1,)
     rss: NDArray[np.float32]  # (1,)
     residual_dof: int
+    safe_invert: bool
 
 
 def flash_select(
@@ -107,9 +113,9 @@ def flash_select(
 
     state = initial_state(S, y, features, num_unused_features)
 
-    if np.linalg.matrix_rank(state.A) < state.A.shape[0]:
+    if not state.safe_invert:
         warnings.warn(
-            "Matrix A is not full rank! May not get correct results. Recommended: try again with a deeper tree model.",
+            "Matrix A is ill-conditioned. Results will still be accurate, but algorithm will be a bit slower.",
             stacklevel=1,
         )
 
@@ -224,12 +230,25 @@ def initial_state(
     """
     A = S.T @ S
     b = S.T @ y
+
+    # Compute minimal dtype to make sure we can invert A
+    cond = np.linalg.cond(A)
+    dtypes = [np.float32, np.float64]
+    safe_dtypes = [dtype for dtype in dtypes if cond < 1 / np.finfo(dtype).eps]
+    safe_invert = bool(safe_dtypes)
+    dtype = safe_dtypes[0] if safe_dtypes else dtypes[-1]
+
+    A = A.astype(dtype)
+    b = b.astype(dtype)
+
     A_inv = np.linalg.pinv(A)
     beta = A_inv @ b
-    rss = np.square(np.linalg.norm(y)) - np.dot(b, beta)
+    ysq = np.square(np.linalg.norm(y))
+    rss = ysq - np.dot(b, beta)
     m, n = S.shape
     residual_dof = m - (n + num_unused_features)
-    return State(A, b, features, A_inv, beta, rss, residual_dof)
+
+    return State(A, b, features, A_inv, beta, ysq, rss, residual_dof, safe_invert)
 
 
 def significance(state: State) -> pd.DataFrame:
@@ -333,8 +352,10 @@ def downdate(state: State, idx: int) -> State:
     features = state.features
     A_inv = state.A_inv
     beta = state.beta
+    ysq = state.ysq
     rss = state.rss
     residual_dof = state.residual_dof
+    safe_invert = state.safe_invert
 
     mask = np.arange(len(features)) != idx
     b_0 = b[idx]
@@ -344,16 +365,23 @@ def downdate(state: State, idx: int) -> State:
     b = b[mask]
     features = features[mask]
 
-    E = A_inv[mask, :][:, mask]
-    G = A_inv[mask, idx]
-    H = A_inv[idx, idx]
-    G_sub_H = G / H
-    G_sub_H_dot_b = np.dot(G_sub_H, b)
+    # If save_invert, assume A is invertible and use fast update formulas
+    # Else, compute pseudo-inverse from scratch
+    if safe_invert:
+        E = A_inv[mask, :][:, mask]
+        G = A_inv[mask, idx]
+        H = A_inv[idx, idx]
+        G_sub_H = G / H
+        G_sub_H_dot_b = np.dot(G_sub_H, b)
 
-    A_inv = E - np.outer(G, G_sub_H)
-    beta = beta[mask] - G * (b_0 + G_sub_H_dot_b)
-    rss += b_0 * beta_0 + H * G_sub_H_dot_b * (b_0 + G_sub_H_dot_b)
+        A_inv = E - np.outer(G, G_sub_H)
+        beta = beta[mask] - G * (b_0 + G_sub_H_dot_b)
+        rss += b_0 * beta_0 + H * G_sub_H_dot_b * (b_0 + G_sub_H_dot_b)
+    else:
+        A_inv = np.linalg.pinv(A)
+        beta = A_inv @ b
+        rss = ysq - np.dot(b, beta)
 
     residual_dof += 1
 
-    return State(A, b, features, A_inv, beta, rss, residual_dof)
+    return State(A, b, features, A_inv, beta, ysq, rss, residual_dof, safe_invert)
