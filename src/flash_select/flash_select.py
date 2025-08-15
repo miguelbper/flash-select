@@ -122,6 +122,31 @@ def flash_select(
     return df
 
 
+def shap_values(tree_model: Any, X: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Compute SHAP values for a tree-based model.
+
+    This function uses the SHAP library to compute feature importance values
+    for each sample-feature combination. SHAP values provide a unified measure
+    of feature importance that can be used for feature selection.
+
+    Parameters
+    ----------
+    tree_model : Any
+        A tree-based model that supports SHAP explanation.
+    X : NDArray
+        Feature matrix of shape (n_samples, n_features).
+
+    Returns
+    -------
+    NDArray[np.float32]
+        SHAP values matrix of shape (n_samples, n_features) where each element
+        represents the contribution of a feature to the prediction for a sample.
+    """
+    explainer = Explainer(tree_model)
+    shap_values = explainer(X)
+    return shap_values.values
+
+
 def remove_unused_features(
     tree_model: Any, S: NDArray[np.float32], features: NDArray[np.str_]
 ) -> tuple[pd.DataFrame, NDArray[np.float32], NDArray[np.str_]]:
@@ -205,31 +230,6 @@ def initial_state(
     m, n = S.shape
     residual_dof = m - (n + num_unused_features)
     return State(A, b, features, A_inv, beta, rss, residual_dof)
-
-
-def shap_values(tree_model: Any, X: NDArray[np.float32]) -> NDArray[np.float32]:
-    """Compute SHAP values for a tree-based model.
-
-    This function uses the SHAP library to compute feature importance values
-    for each sample-feature combination. SHAP values provide a unified measure
-    of feature importance that can be used for feature selection.
-
-    Parameters
-    ----------
-    tree_model : Any
-        A tree-based model that supports SHAP explanation.
-    X : NDArray
-        Feature matrix of shape (n_samples, n_features).
-
-    Returns
-    -------
-    NDArray[np.float32]
-        SHAP values matrix of shape (n_samples, n_features) where each element
-        represents the contribution of a feature to the prediction for a sample.
-    """
-    explainer = Explainer(tree_model)
-    shap_values = explainer(X)
-    return shap_values.values
 
 
 def significance(state: State) -> pd.DataFrame:
