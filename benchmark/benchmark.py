@@ -22,19 +22,12 @@ def get_y(X: NDArray) -> NDArray:
     return y
 
 
-def get_model(m: int, n: int) -> XGBRegressor:
+def get_model(m: int, n: int, n_estimators: int = 100) -> XGBRegressor:
     X_train = rng.normal(size=(m, n))
     y_train = get_y(X_train)
 
-    model = XGBRegressor(
-        n_estimators=100,
-        verbosity=0,
-        seed=42,
-        nthread=1,
-    )
-
+    model = XGBRegressor(n_estimators=n_estimators)
     model.fit(X_train, y_train)
-
     return model
 
 
@@ -53,9 +46,20 @@ def shap_select_regression(
     return df
 
 
-def benchmark(m_train: int, m_val: int, n: int, alpha: float = 1e-6, plot_results: bool = False) -> None:
-    print(f"Fitting xgboost model with {m_train} samples and {n} features")
-    tree_model = get_model(m_train, n)
+def benchmark(
+    m_train: int,
+    m_val: int,
+    n: int,
+    n_estimators: int = 100,
+    alpha: float = 1e-6,
+    plot_results: bool = False,
+) -> None:
+    print(f"Fitting xgboost model with {m_train} samples, {n} features, and {n_estimators} trees")
+    tree_model = get_model(m_train, n, n_estimators=n_estimators)
+
+    feature_scores = tree_model.get_booster().get_score()
+    num_unused_features = n - len(feature_scores)
+    print(f"* Number of unused features: {num_unused_features}")
 
     print(f"Creating validation set with {m_val} samples and {n} features")
     X = rng.normal(size=(m_val, n))
@@ -79,6 +83,9 @@ def benchmark(m_train: int, m_val: int, n: int, alpha: float = 1e-6, plot_result
 
     equal_selected = df_flash[SELECTED].equals(df_shap[SELECTED])
     print(f"* Same set of selected features? {'yes' if equal_selected else 'no'}")
+
+    print(df_flash)
+    print(df_shap)
 
     if plot_results:
         plot(m_val, n, t_flash, t_shap)
@@ -118,7 +125,7 @@ def plot(m_val: int, n: int, time_flash: float, time_shap: float) -> None:
 
     plt.tight_layout()
 
-    filename = f"benchmark_{m_val}_{n}.png"
+    filename = f"logs/benchmark_{m_val}_{n}.png"
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     print(f"Plot saved as: {filename}")
 
@@ -129,16 +136,18 @@ def plot(m_val: int, n: int, time_flash: float, time_shap: float) -> None:
 @click.option("--m_train", default=1000, help="Number of training samples")
 @click.option("--m_val", default=1000, help="Number of validation samples")
 @click.option("--n", default=10, help="Number of features")
+@click.option("--n_estimators", default=100, help="Number of estimators for xgboost")
 @click.option("--alpha", default=1e-6, help="Alpha parameter for shap_select")
 @click.option("--plot_results", is_flag=True, help="Plot the results")
-def main(m_train: int, m_val: int, n: int, alpha: float, plot_results: bool) -> None:
+def main(m_train: int, m_val: int, n: int, n_estimators: int, alpha: float, plot_results: bool) -> None:
     print("Running benchmark with parameters:")
     print(f"* m_train: {m_train}")
     print(f"* m_val: {m_val}")
     print(f"* n: {n}")
+    print(f"* n_estimators: {n_estimators}")
     print(f"* alpha: {alpha:.2e}")
 
-    benchmark(m_train, m_val, n, alpha, plot_results)
+    benchmark(m_train, m_val, n, n_estimators, alpha, plot_results)
 
 
 if __name__ == "__main__":
