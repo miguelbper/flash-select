@@ -136,7 +136,7 @@ def main(m_train: int, m_val: int, n: int, alpha: float, plot_results: bool) -> 
     print(f"* m_train: {m_train}")
     print(f"* m_val: {m_val}")
     print(f"* n: {n}")
-    print(f"* alpha: {alpha:.2e}\n")
+    print(f"* alpha: {alpha:.2e}")
 
     benchmark(m_train, m_val, n, alpha, plot_results)
 

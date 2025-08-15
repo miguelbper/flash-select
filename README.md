@@ -64,7 +64,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 
 # Run benchmark
-uv run benchmark/benchmark.py
+bash benchmark/run.sh
 ```
 
 **Benchmark results:**
