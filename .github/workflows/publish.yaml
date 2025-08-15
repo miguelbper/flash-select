@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # id-token: write  # Needed to publish to PyPI
+      id-token: write
 
     steps:
       - name: Checkout
@@ -31,10 +31,8 @@ jobs:
       - name: Build the package
         run: uv build
 
-      # For projects that are published to PyPI, uncomment this step
-      # Setup Trusted Publisher with PyPI to publish without needing a token
-      # - name: Upload the package to PyPI
-      #   uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Upload the package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
