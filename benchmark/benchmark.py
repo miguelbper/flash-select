@@ -66,19 +66,19 @@ def benchmark(m_train: int, m_val: int, n: int, alpha: float = 1e-6, plot_result
     t0 = time()
     df_flash = flash_select(tree_model, X, y, features)
     t_flash = time() - t0
-    print(f"flash_select took {t_flash} seconds")
+    print(f"* flash_select took {t_flash} seconds")
 
     print("Running shap_select...")
     t0 = time()
     df_shap = shap_select_regression(tree_model, X, y, features, alpha=alpha)
     t_shap = time() - t0
-    print(f"shap_select took {t_shap} seconds")
+    print(f"* shap_select took {t_shap} seconds")
 
     speedup = t_shap / t_flash
-    print(f"Speedup: {speedup}")
+    print(f"* Speedup: {speedup}")
 
     equal_selected = df_flash[SELECTED].equals(df_shap[SELECTED])
-    print(f"Same set of selected features? {'yes' if equal_selected else 'no'}")
+    print(f"* Same set of selected features? {'yes' if equal_selected else 'no'}")
 
     if plot_results:
         plot(m_val, n, t_flash, t_shap)
