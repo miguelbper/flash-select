@@ -18,7 +18,7 @@
 ---
 
 ## Description
-flash-select is an extremely fast implementation of [shap-select](https://github.com/transferwise/shap-select), a very nice feature selection method. flash-select gives the same output as shap-select (more on this below) while being significantly faster: for a dataset with 25,600 examples and 256 features, **flash-select is ~300x faster**.
+flash-select is an extremely fast implementation of [shap-select](https://github.com/transferwise/shap-select), a very nice feature selection method. flash-select gives the same output as shap-select (more on this below) while being significantly faster: for a dataset with 100000 examples and 100 features, **flash-select is ~200x faster**. For 200000 examples and 200 features, **it is ~1000x faster** (see the benchmark below).
 
 Given that flash-select has lower algorithmic complexity than shap-select, for larger datasets the speedup will be even greater.
 
@@ -34,10 +34,10 @@ pip install flash-select
 ## Usage
 ```python
 from flash_select import flash_select
-import xgboost as xgb
+from xgboost import XGBRegressor
 
 # Train a model
-model = xgb.XGBRegressor()
+model = XGBRegressor()
 model.fit(X_train, y_train)
 
 # Perform feature selection
@@ -68,12 +68,14 @@ bash benchmark/run.sh
 ```
 
 **Benchmark results:**
-| Samples (m) | Features (n) | flash-select (s) | shap-select (s) | Speedup | Selected Features | Selected same set of features?|
-|-------------|--------------|------------------|-----------------|---------|-------------------|-------------------------------|
-| 3200        | 32           | 0.19             | 0.87            | 4.6x    | 15/32             | Yes                           |
-| 6400        | 64           | 0.65             | 7.05            | 10.9x   | 32/64             | Yes                           |
-| 12800       | 128          | 2.06             | 127.86          | 62.0x   | 65/128            | Yes                           |
-| 25600       | 256          | 7.78             | 2476.31         | 318.3x  | 129/256           | Yes                           |
+| Samples (m) | Features (n) | flash-select (s) | shap-select (s) | Speedup | Selected same set of features?|
+|-------------|--------------|------------------|-----------------|---------|-------------------------------|
+| 10000       | 10           | 0.37             | 0.50            | 1.3x    | Yes                           |
+| 25000       | 25           | 1.00             | 4.41            | 4.4x    | Yes                           |
+| 50000       | 50           | 2.25             | 35.69           | 15.8x   | Yes                           |
+| 75000       | 75           | 2.26             | 216.36          | 95.9x   | Yes                           |
+| 100000      | 100          | 3.66             | 761.63          | 208.3x  | Yes                           |
+| 200000      | 200          | 10.61            | 11174.12        | 1052.7x | Yes                           |
 
 **System Specifications:**
 - **OS**: Ubuntu 24.04.2 LTS on Windows 10 x86_64 (WSL2)
@@ -83,12 +85,12 @@ bash benchmark/run.sh
 - **Environment**: WSL2 (Windows Subsystem for Linux)
 
 ## How is it so fast?
-The original implementation of shap-select iteratively performs a linear regression on the dataset (Shapley values, target), where at each iteration we delete one column of the Shapley values matrix. With no regularization, the linear regression coefficients $\beta$ are given by:
+The original implementation of shap-select iteratively performs a linear regression on the dataset $(S, y)$, where $S$ are the Shapley values and $y$ is the target. At each iteration we delete one column of the Shapley values matrix. With no regularization, the linear regression coefficients $\beta$ are given by:
 
 $$
     \begin{align}
-    A &= S^T S \\
-    b &= S^T y \\
+    A &\coloneqq S^T S \\
+    b &\coloneqq S^T y \\
     \beta &= A^{-1} b.
     \end{align}
 $$
