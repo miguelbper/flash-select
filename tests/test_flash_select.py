@@ -12,11 +12,13 @@ from flash_select.flash_select import (
     FEATURE_NAME,
     STAT_SIGNIFICANCE,
     T_VALUE,
+    State,
     downdate,
     flash_select,
+    get_Ab,
     initial_state,
     ols,
-    shap_values,
+    unused_features,
 )
 
 N_SEEDS = 10
@@ -31,17 +33,22 @@ def seed(request: pytest.FixtureRequest) -> int:
     return request.param
 
 
+@pytest.fixture(params=[np.float32, np.float64])
+def dtype(request: pytest.FixtureRequest) -> np.dtype:
+    return request.param
+
+
 @pytest.fixture
-def X(seed: int) -> NDArray:
+def X(seed: int, dtype: np.dtype) -> NDArray[np.number]:
     rng = np.random.default_rng(seed)
-    X = rng.normal(size=(M, N)).astype(np.float32)
+    X = rng.normal(size=(M, N)).astype(dtype)
     return X
 
 
 @pytest.fixture
-def y(seed: int) -> NDArray:
+def y(seed: int, dtype: np.dtype) -> NDArray[np.number]:
     rng = np.random.default_rng(seed + N_SEEDS)
-    y = rng.normal(size=(M,)).astype(np.float32)
+    y = rng.normal(size=(M,)).astype(dtype)
     return y
 
 
@@ -51,10 +58,10 @@ def use_all_features(request: pytest.FixtureRequest) -> bool:
 
 
 @pytest.fixture
-def tree_model(use_all_features: bool, seed: int) -> XGBRegressor:
+def tree_model(use_all_features: bool, seed: int, dtype: np.dtype) -> XGBRegressor:
     rng = np.random.default_rng(seed + 2 * N_SEEDS)
-    X_train = rng.normal(size=(M, N)).astype(np.float32)
-    y_train = rng.normal(size=(M,)).astype(np.float32)
+    X_train = rng.normal(size=(M, N)).astype(dtype)
+    y_train = rng.normal(size=(M,)).astype(dtype)
 
     if use_all_features:
         N_ESTIMATORS = 10
@@ -75,64 +82,65 @@ def tree_model(use_all_features: bool, seed: int) -> XGBRegressor:
     return model
 
 
-@pytest.fixture
-def S(tree_model: XGBRegressor, X: NDArray) -> NDArray:
-    explainer = Explainer(tree_model)
-    S = explainer(X)
-    return S.values
-
-
-@pytest.fixture
-def A(S: NDArray) -> NDArray:
-    A = S.T @ S
-    return A
-
-
-@pytest.fixture
-def b(S: NDArray, y: NDArray) -> NDArray:
-    b = S.T @ y
-    return b
-
-
-@pytest.fixture
-def y_sq(y: NDArray) -> float:
-    return np.square(np.linalg.norm(y))
-
-
-@pytest.fixture(params=range(N))
-def idx(request: pytest.FixtureRequest) -> int:
+@pytest.fixture(params=[1, M // 2, M])
+def batch_size(request: pytest.FixtureRequest) -> int | None:
     return request.param
 
 
-class TestShapValues:
-    def test_shape(self, tree_model: XGBRegressor, X: NDArray) -> None:
-        S = shap_values(tree_model, X)
-        assert S.shape == (M, N)
+def test_get_Ab(
+    tree_model: XGBRegressor,
+    X: NDArray[np.number],
+    y: NDArray[np.number],
+    dtype: np.dtype,
+    batch_size: int | None,
+) -> None:
+    _, n = X.shape
+    mask = np.ones(n, dtype=np.bool_)
+    A_stream, b_stream = get_Ab(tree_model, X, y, mask, dtype, batch_size)
+    A_batch, b_batch = get_Ab(tree_model, X, y, mask, dtype, None)
 
-    def test_dtype(self, tree_model: XGBRegressor, X: NDArray) -> None:
-        S = shap_values(tree_model, X)
-        assert S.dtype == np.float32
+    assert A_stream.shape == (n, n)
+    assert b_stream.shape == (n,)
+    assert A_batch.shape == (n, n)
+    assert b_batch.shape == (n,)
+
+    assert A_stream.dtype == dtype
+    assert b_stream.dtype == dtype
+    assert A_batch.dtype == dtype
+    assert b_batch.dtype == dtype
+
+    assert np.allclose(A_stream, A_batch, atol=tol, rtol=tol)
+    assert np.allclose(b_stream, b_batch, atol=tol, rtol=tol)
 
 
-def test_downdate(S, y, y_sq, idx: int) -> None:
+@pytest.fixture
+def state(tree_model: XGBRegressor, X: NDArray[np.number], y: NDArray[np.number], dtype: np.dtype) -> State:
     features = np.array(FEATURES)
-    num_unused_features = 0
-    state = initial_state(S, y, features, num_unused_features)
+    n = len(features)
+    feature_scores = tree_model.get_booster().get_score()
+    mask = np.array([f"f{i}" in feature_scores for i in range(n)])
+    return initial_state(tree_model, X, y, features, mask, dtype)
 
-    A = state.A
+
+@pytest.fixture(params=range(N))
+def idx(request: pytest.FixtureRequest, state: State) -> int | None:
+    n = state.A.shape[0]
+    i = request.param
+    if i >= n:
+        pytest.skip("Index out of range")
+    return i
+
+
+def test_downdate(state: State, idx: int, dtype: np.dtype) -> None:
+    n = state.A.shape[0]
+    ysq = state.ysq
     residual_dof = state.residual_dof
-
-    n = A.shape[0]
-    full_rank = np.linalg.matrix_rank(A) == n
-    if not full_rank:
-        pytest.skip("Matrix A is rank deficient")
-
     state_down = downdate(state, idx)
 
     A_down = state_down.A
     b_down = state_down.b
     features_down = state_down.features
-    A_inv_down = state_down.A_inv
+    A_inv_down = state_down.A_pinv
     beta_down = state_down.beta
     rss_down = state_down.rss
     residual_dof_down = state_down.residual_dof
@@ -146,23 +154,37 @@ def test_downdate(S, y, y_sq, idx: int) -> None:
     assert rss_down.shape == ()
 
     # dtypes
-    assert A_down.dtype == np.float32
-    assert b_down.dtype == np.float32
+    assert A_down.dtype == dtype
+    assert b_down.dtype == dtype
     assert features_down.dtype.kind == "U"
-    assert A_inv_down.dtype == np.float32
-    assert beta_down.dtype == np.float32
-    assert rss_down.dtype == np.float32
+    assert A_inv_down.dtype == dtype
+    assert beta_down.dtype == dtype
+    assert rss_down.dtype == dtype
 
     # formulas / properties
     assert np.allclose(A_inv_down, np.linalg.pinv(A_down), atol=tol, rtol=tol)
     assert np.allclose(beta_down, A_inv_down @ b_down, atol=tol, rtol=tol)
-    assert np.allclose(rss_down, y_sq - np.dot(b_down, beta_down), atol=tol, rtol=tol)
+    assert np.allclose(rss_down, ysq - np.dot(b_down, beta_down), atol=tol, rtol=tol)
     assert residual_dof_down == residual_dof + 1
 
 
-def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> None:
-    def ols_statsmodels(S: NDArray, y: NDArray, features: list[str]) -> pd.DataFrame:
-        df_S = pd.DataFrame(S, columns=features)
+def test_ols(
+    tree_model: XGBRegressor,
+    X: NDArray[np.number],
+    y: NDArray[np.number],
+    state: State,
+) -> None:
+    def ols_ours(tree_model: XGBRegressor, state: State) -> pd.DataFrame:
+        df_unused_features, _ = unused_features(tree_model, FEATURES)
+        df_ols = ols(state)
+        df_out = pd.concat([df_ols, df_unused_features]).sort_values(by=FEATURE_NAME)
+        return df_out.reset_index(drop=True)
+
+    def ols_statsmodels(tree_model: XGBRegressor, X: NDArray[np.number], y: NDArray[np.number]) -> pd.DataFrame:
+        explainer = Explainer(tree_model)
+        S = explainer(X).values
+
+        df_S = pd.DataFrame(S, columns=FEATURES)
         df_y = pd.Series(y, name="target")
         model = OLS(df_y, df_S)
         result = model.fit_regularized(alpha=0.0, refit=True)
@@ -175,20 +197,26 @@ def test_ols(S: NDArray, y: NDArray, A: NDArray, b: NDArray, y_sq: float) -> Non
             "Coef.": COEFFICIENT,
         }
         df = df.rename(columns=rename_by)[list(rename_by.values())]
+
+        df[T_VALUE] = np.where(df[COEFFICIENT].abs() < 1e-10, np.nan, df[T_VALUE])
+        df[STAT_SIGNIFICANCE] = np.where(df[COEFFICIENT].abs() < 1e-10, np.nan, df[STAT_SIGNIFICANCE])
+
         return df
 
-    state = initial_state(S, y, FEATURES, 0)
-    df_0 = ols(state)
-    df_1 = ols_statsmodels(S, y, FEATURES)
-
-    df_1[T_VALUE] = np.where(df_1[COEFFICIENT].abs() < 1e-10, np.nan, df_1[T_VALUE])
-    df_1[STAT_SIGNIFICANCE] = np.where(df_1[COEFFICIENT].abs() < 1e-10, np.nan, df_1[STAT_SIGNIFICANCE])
+    df_0 = ols_ours(tree_model, state)
+    df_1 = ols_statsmodels(tree_model, X, y)
 
     pd.testing.assert_frame_equal(df_0, df_1, check_dtype=False, rtol=tol, atol=tol)
 
 
-def test_flash_select(tree_model: XGBRegressor, X: NDArray, y: NDArray) -> None:
-    df_flash_select = flash_select(tree_model, X, y, FEATURES)
+def test_flash_select(
+    tree_model: XGBRegressor,
+    X: NDArray[np.number],
+    y: NDArray[np.number],
+    dtype: np.dtype,
+    batch_size: int | None,
+) -> None:
+    df_flash_select = flash_select(tree_model, X, y, FEATURES, dtype=dtype, batch_size=batch_size)
 
     X_df = pd.DataFrame(X, columns=FEATURES)
     y_df = pd.Series(y, name="target")

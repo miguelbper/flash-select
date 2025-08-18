@@ -30,7 +30,7 @@ class State:
         b = S^T @ y where y is the target variable.
     features : NDArray[np.str_]
         Array of feature names of shape (n,) for the currently active features.
-    A_inv : NDArray[np.float32]
+    A_pinv : NDArray[np.float32]
         Inverse of the design matrix A of shape (n, n).
     beta : NDArray[np.float32]
         Coefficient vector of shape (n,) from the current OLS regression.
@@ -47,7 +47,7 @@ class State:
     A: NDArray[np.float32]  # (n, n)
     b: NDArray[np.float32]  # (n,)
     features: NDArray[np.str_]  # (n,)
-    A_inv: NDArray[np.float32]  # (n, n)
+    A_pinv: NDArray[np.float32]  # (n, n)
     beta: NDArray[np.float32]  # (n,)
     ysq: NDArray[np.float32]  # (1,)
     rss: NDArray[np.float32]  # (1,)
@@ -57,10 +57,12 @@ class State:
 
 def flash_select(
     tree_model: Any,
-    X: NDArray,
-    y: NDArray,
+    X: NDArray[np.number],
+    y: NDArray[np.number],
     features: Iterable[str],
     threshold: float = 0.05,
+    dtype: np.dtype = np.float32,
+    batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Main function to perform feature selection using SHAP values and
     statistical significance.
@@ -75,15 +77,22 @@ def flash_select(
     ----------
     tree_model : Any
         A tree-based model (e.g., XGBoost, LightGBM) that supports SHAP explanation.
-    X : NDArray
+    X : NDArray[np.number]
         Feature matrix of shape (n_samples, n_features).
-    y : NDArray
+    y : NDArray[np.number]
         Target variable of shape (n_samples,).
     features : Iterable[str]
         List of feature names corresponding to the columns in X.
     threshold : float, default=0.05
         Significance threshold for feature selection. Features with p-value < threshold
         are considered significant.
+    dtype : np.dtype, default=np.float32
+        Data type for computations.
+    batch_size : int | None, default=None
+        If provided, process data in batches of this size to manage memory usage.
+        If None, process all data at once. Does not affect the results. Only
+        makes the Shapley values computation happen in batches, saving in memory
+        but sacrificing some speed. Use this if you are experiencing memory issues.
 
     Returns
     -------
@@ -102,16 +111,12 @@ def flash_select(
     UserWarning
         If the design matrix A is not full rank, indicating potential numerical issues.
     """
-    X = X.astype(np.float32)
-    y = y.astype(np.float32)
+    X = X.astype(dtype)
+    y = y.astype(dtype)
     features = np.array(features, dtype=np.str_)
 
-    S = shap_values(tree_model, X)
-
-    df_unused_features, S, features = remove_unused_features(tree_model, S, features)
-    num_unused_features = len(df_unused_features)
-
-    state = initial_state(S, y, features, num_unused_features)
+    df_unused_features, mask = unused_features(tree_model, features)
+    state = initial_state(tree_model, X, y, features, mask, dtype, batch_size)
 
     if not state.safe_invert:
         warnings.warn(
@@ -128,59 +133,30 @@ def flash_select(
     return df
 
 
-def shap_values(tree_model: Any, X: NDArray[np.float32]) -> NDArray[np.float32]:
-    """Compute SHAP values for a tree-based model.
-
-    This function uses the SHAP library to compute feature importance values
-    for each sample-feature combination. SHAP values provide a unified measure
-    of feature importance that can be used for feature selection.
-
-    Parameters
-    ----------
-    tree_model : Any
-        A tree-based model that supports SHAP explanation.
-    X : NDArray
-        Feature matrix of shape (n_samples, n_features).
-
-    Returns
-    -------
-    NDArray[np.float32]
-        SHAP values matrix of shape (n_samples, n_features) where each element
-        represents the contribution of a feature to the prediction for a sample.
-    """
-    explainer = Explainer(tree_model)
-    shap_values = explainer(X)
-    return shap_values.values
-
-
-def remove_unused_features(
-    tree_model: Any, S: NDArray[np.float32], features: NDArray[np.str_]
-) -> tuple[pd.DataFrame, NDArray[np.float32], NDArray[np.str_]]:
+def unused_features(tree_model: Any, features: NDArray[np.str_]) -> tuple[pd.DataFrame, NDArray[np.bool_]]:
     """Remove features that are not used by the tree model.
 
     This function identifies features that have zero importance scores in the tree model
-    and removes them from the SHAP values matrix and features list. It creates a DataFrame
-    for these unused features with appropriate default values.
+    and creates a DataFrame for these unused features with appropriate default values.
+    It returns a mask indicating which features are used by the model.
 
     Parameters
     ----------
     tree_model : Any
         A tree-based model with a get_booster().get_score() method.
-    S : NDArray[np.float32]
-        SHAP values matrix of shape (n_samples, n_features).
     features : NDArray[np.str_]
         Array of feature names of shape (n_features,).
 
     Returns
     -------
-    tuple[pd.DataFrame, NDArray[np.float32], NDArray[np.str_]]
+    tuple[pd.DataFrame, NDArray[np.bool_]]
         A tuple containing:
         - df_unused_features: DataFrame with unused feature information
-        - S: Updated SHAP values matrix with unused features removed
-        - features: Updated feature names array with unused features removed
+        - mask: Boolean mask of shape (n_features,) indicating which features are used by the model
     """
+    n = len(features)
     feature_scores = tree_model.get_booster().get_score()
-    mask = np.array([f"f{i}" in feature_scores for i in range(S.shape[1])])
+    mask = np.array([f"f{i}" in feature_scores for i in range(n)])
     unused_features = np.array(features)[~mask]
     num_unused_features = len(unused_features)
     df_unused_features = pd.DataFrame(
@@ -191,16 +167,17 @@ def remove_unused_features(
             COEFFICIENT: np.zeros(num_unused_features),
         }
     )
-    features = np.array(features)[mask]
-    S = S[:, mask]
-    return df_unused_features, S, features
+    return df_unused_features, mask
 
 
 def initial_state(
-    S: NDArray[np.float32],
-    y: NDArray[np.float32],
+    tree_model: Any,
+    X: NDArray[np.number],
+    y: NDArray[np.number],
     features: NDArray[np.str_],
-    num_unused_features: int,
+    mask: NDArray[np.bool_],
+    dtype: np.dtype = np.float32,
+    batch_size: int | None = None,
 ) -> State:
     """Initialize the state for the feature selection algorithm.
 
@@ -208,47 +185,101 @@ def initial_state(
     1. Computing the design matrix A = S^T @ S
     2. Computing the response vector b = S^T @ y
     3. Computing the inverse of A using pseudo-inverse
-    4. Computing initial coefficients beta = A_inv @ b
+    4. Computing initial coefficients beta = A_pinv @ b
     5. Computing residual sum of squares (RSS)
     6. Computing residual degrees of freedom
 
     Parameters
     ----------
-    S : NDArray[np.float32]
-        SHAP values matrix of shape (n_samples, n_features).
-    y : NDArray[np.float32]
+    tree_model : Any
+        A tree-based model that supports SHAP explanation.
+    X : NDArray[np.number]
+        Feature matrix of shape (n_samples, n_features).
+    y : NDArray[np.number]
         Target variable of shape (n_samples,).
     features : NDArray[np.str_]
         Array of feature names of shape (n_features,).
-    num_unused_features : int
-        Number of features that were removed as unused.
+    mask : NDArray[np.bool_]
+        Mask of shape (n_features,) indicating which features are used by the model.
+    dtype : np.dtype, default=np.float32
+        Data type for computations.
+    batch_size : int | None, default=None
+        If provided, process data in batches of this size to manage memory usage.
+        If None, process all data at once.
 
     Returns
     -------
     State
         Initial state object with all computed values.
     """
-    A = S.T @ S
-    b = S.T @ y
-
-    # Compute minimal dtype to make sure we can invert A
-    cond = np.linalg.cond(A)
-    dtypes = [np.float32, np.float64]
-    safe_dtypes = [dtype for dtype in dtypes if cond < 1 / np.finfo(dtype).eps]
-    safe_invert = bool(safe_dtypes)
-    dtype = safe_dtypes[0] if safe_dtypes else dtypes[-1]
-
-    A = A.astype(dtype)
-    b = b.astype(dtype)
-
-    A_inv = np.linalg.pinv(A)
-    beta = A_inv @ b
+    A, b = get_Ab(tree_model, X, y, mask, dtype, batch_size)
+    features = features[mask]
+    A_pinv = np.linalg.pinv(A)
+    beta = A_pinv @ b
     ysq = np.square(np.linalg.norm(y))
     rss = ysq - np.dot(b, beta)
-    m, n = S.shape
-    residual_dof = m - (n + num_unused_features)
+    m, n = X.shape
+    residual_dof = m - n
+    safe_invert = bool(np.linalg.cond(A) < 1 / np.finfo(A.dtype).eps)
 
-    return State(A, b, features, A_inv, beta, ysq, rss, residual_dof, safe_invert)
+    return State(A, b, features, A_pinv, beta, ysq, rss, residual_dof, safe_invert)
+
+
+def get_Ab(
+    tree_model: Any,
+    X: NDArray[np.number],
+    y: NDArray[np.number],
+    mask: NDArray[np.bool_],
+    dtype: np.dtype = np.float32,
+    batch_size: int | None = None,
+) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+    """Compute the design matrix A and response vector b for the current state.
+
+    This function computes the design matrix A = S^T @ S and response vector b = S^T @ y
+    where S is the SHAP values matrix. It supports batch processing for large datasets
+    to manage memory usage.
+
+    Parameters
+    ----------
+    tree_model : Any
+        A tree-based model that supports SHAP explanation.
+    X : NDArray[np.number]
+        Feature matrix of shape (n_samples, n_features).
+    y : NDArray[np.number]
+        Target variable of shape (n_samples,).
+    mask : NDArray[np.bool_]
+        Boolean mask indicating which features are used by the model.
+    dtype : np.dtype, default=np.float32
+        Data type for the output arrays.
+    batch_size : int | None, default=None
+        If provided, process data in batches of this size to manage memory usage.
+        If None, process all data at once.
+
+    Returns
+    -------
+    tuple[NDArray[np.float32], NDArray[np.float32]]
+        A tuple containing:
+        - A: Design matrix of shape (n_active_features, n_active_features)
+        - b: Response vector of shape (n_active_features,)
+    """
+    explainer = Explainer(tree_model)
+    if not batch_size:
+        S = explainer(X).values[:, mask]
+        A = S.T @ S
+        b = S.T @ y
+    else:
+        m, _ = X.shape
+        n = np.sum(mask)
+        A = np.zeros((n, n), dtype=X.dtype)
+        b = np.zeros(n, dtype=X.dtype)
+        for k in range(0, m, batch_size):
+            X_batch = X[k : k + batch_size]
+            y_batch = y[k : k + batch_size]
+            S_batch = explainer(X_batch).values[:, mask]
+            A += S_batch.T @ S_batch
+            b += S_batch.T @ y_batch
+
+    return A.astype(dtype), b.astype(dtype)
 
 
 def significance(state: State) -> pd.DataFrame:
@@ -311,7 +342,7 @@ def ols(state: State) -> pd.DataFrame:
         - coefficient: Estimated coefficient value (beta)
     """
     sigma_sq = state.rss / state.residual_dof
-    inv_diag = np.diag(state.A_inv)
+    inv_diag = np.diag(state.A_pinv)
     t_stats = state.beta / np.sqrt(sigma_sq * inv_diag)
     p_values = 2 * (1 - scipy.stats.t.cdf(np.abs(t_stats), state.residual_dof))
 
@@ -350,7 +381,7 @@ def downdate(state: State, idx: int) -> State:
     A = state.A
     b = state.b
     features = state.features
-    A_inv = state.A_inv
+    A_pinv = state.A_pinv
     beta = state.beta
     ysq = state.ysq
     rss = state.rss
@@ -365,23 +396,23 @@ def downdate(state: State, idx: int) -> State:
     b = b[mask]
     features = features[mask]
 
-    # If save_invert, assume A is invertible and use fast update formulas
+    # If safe_invert, assume A is invertible and use fast update formulas
     # Else, compute pseudo-inverse from scratch
     if safe_invert:
-        E = A_inv[mask, :][:, mask]
-        G = A_inv[mask, idx]
-        H = A_inv[idx, idx]
+        E = A_pinv[mask, :][:, mask]
+        G = A_pinv[mask, idx]
+        H = A_pinv[idx, idx]
         G_sub_H = G / H
         G_sub_H_dot_b = np.dot(G_sub_H, b)
 
-        A_inv = E - np.outer(G, G_sub_H)
+        A_pinv = E - np.outer(G, G_sub_H)
         beta = beta[mask] - G * (b_0 + G_sub_H_dot_b)
         rss += b_0 * beta_0 + H * G_sub_H_dot_b * (b_0 + G_sub_H_dot_b)
     else:
-        A_inv = np.linalg.pinv(A)
-        beta = A_inv @ b
+        A_pinv = np.linalg.pinv(A)
+        beta = A_pinv @ b
         rss = ysq - np.dot(b, beta)
 
     residual_dof += 1
 
-    return State(A, b, features, A_inv, beta, ysq, rss, residual_dof, safe_invert)
+    return State(A, b, features, A_pinv, beta, ysq, rss, residual_dof, safe_invert)
